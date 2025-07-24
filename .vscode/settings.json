@@ -1,0 +1,17 @@
+{
+  "cSpell.words": [
+    "chainsafe",
+    "dnsaddr",
+    "Encrypters",
+    "gossipsub",
+    "libp2p",
+    "Multiaddr",
+    "Multiaddrs",
+    "multiformats",
+    "Muxers",
+    "Startable",
+    "unhandle",
+    "webrtc",
+    "yamux"
+  ]
+}

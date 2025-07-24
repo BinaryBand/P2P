@@ -1,0 +1,30 @@
+{
+  "name": "p2p",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "npm run build && node dist/index.js",
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.1.0"
+  },
+  "dependencies": {
+    "@chainsafe/libp2p-gossipsub": "^14.1.1",
+    "@chainsafe/libp2p-noise": "^16.1.4",
+    "@chainsafe/libp2p-yamux": "^7.0.4",
+    "@libp2p/bootstrap": "^11.0.46",
+    "@libp2p/circuit-relay-v2": "^3.2.23",
+    "@libp2p/echo": "^2.1.27",
+    "@libp2p/identify": "^3.0.38",
+    "@libp2p/kad-dht": "^15.1.10",
+    "@libp2p/webrtc": "^5.2.23",
+    "@libp2p/websockets": "^9.2.18",
+    "libp2p": "^2.9.0"
+  }
+}
