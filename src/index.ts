@@ -8,6 +8,9 @@ import { yamux } from "@chainsafe/libp2p-yamux";
 import { identify } from "@libp2p/identify";
 import { ping } from "@libp2p/ping";
 
+import { keys } from "@libp2p/crypto";
+// generateEd25519KeyPairFromSeed
+
 import { circuitRelayServer, circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { webRTC, webRTCDirect } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
@@ -18,6 +21,7 @@ import { WebRTC, WebSockets, P2P, WebRTCDirect } from "@multiformats/multiaddr-m
 import { DialPeerEvent, kadDHT } from "@libp2p/kad-dht";
 import { gossipsub } from "@chainsafe/libp2p-gossipsub";
 import { PeerId } from "@libp2p/interface";
+import { convertPeerId } from "@libp2p/kad-dht/dist/src/utils";
 
 // Known peers addresses
 const bootstrapMultiaddrs = [
@@ -32,6 +36,7 @@ const stockOptions = {
 
 const discoveryOptions = {
   ...stockOptions,
+  addresses: { listen: ["/p2p-circuit", "/webrtc"] },
   peerDiscovery: [bootstrap({ list: bootstrapMultiaddrs })],
   services: {
     dht: kadDHT(), // data structure to store and retrieve data; find peers efficiently
@@ -45,29 +50,32 @@ const discoveryOptions = {
 async function main() {
   console.log("Starting application...");
 
-  const client1 = await createLibp2p({ ...discoveryOptions, addresses: { listen: ["/p2p-circuit", "/webrtc"] } });
-  const client2 = await createLibp2p({ ...discoveryOptions, addresses: { listen: ["/p2p-circuit", "/webrtc"] } });
+  const privateKey = await keys.generateKeyPairFromSeed("Ed25519", new Uint8Array(32));
+
+  const client1 = await createLibp2p({ ...discoveryOptions, privateKey });
+  const client2 = await createLibp2p({ ...discoveryOptions });
   console.log("Client1", client1.peerId.toString());
   console.log("Client2", client2.peerId.toString());
 
-  // Allow client nodes to connect to each other
-  let relayP2pAddress1: Multiaddr | undefined;
-  let relayP2pAddress2: Multiaddr | undefined;
-  while (!relayP2pAddress1 || !relayP2pAddress2) {
-    relayP2pAddress1 ??= client1.getMultiaddrs().find((ma) => WebRTC.matches(ma));
-    relayP2pAddress2 ??= client2.getMultiaddrs().find((ma) => WebRTC.matches(ma));
-    await new Promise((res) => setTimeout(res, 1000));
-  }
-  await client1.dial(relayP2pAddress2, { signal: AbortSignal.timeout(15000) });
-  await client2.dial(relayP2pAddress1, { signal: AbortSignal.timeout(15000) });
-  console.log("Both client nodes connected.");
+  const targetPeerId: PeerId = client2.peerId;
+  console.log("Target Peer ID:", targetPeerId.toString());
 
-  const z = client1.services.dht.findPeer(client2.peerId, {
-    signal: AbortSignal.timeout(15000),
-  });
+  let multiAddresses: Multiaddr[] | undefined;
+  while (!multiAddresses || multiAddresses.length === 0) {
+    try {
+      const queryResults = client1.services.dht.findPeer(targetPeerId, {
+        signal: AbortSignal.timeout(15000),
+      });
 
-  for await (const event of z) {
-    console.log("DHT event:", event);
+      for await (const event of queryResults) {
+        if (event.type === 2) {
+          multiAddresses = event.peer.multiaddrs;
+          break;
+        }
+      }
+    } catch {}
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
   const key: string = crypto.randomUUID();
