@@ -15,7 +15,7 @@ import { webSockets } from "@libp2p/websockets";
 import { multiaddr, Multiaddr } from "@multiformats/multiaddr";
 import { WebRTC, WebSockets, P2P, WebRTCDirect } from "@multiformats/multiaddr-matcher";
 
-import { DialPeerEvent, kadDHT } from "@libp2p/kad-dht";
+import { DialPeerEvent, kadDHT, QueryEvent } from "@libp2p/kad-dht";
 import { gossipsub } from "@chainsafe/libp2p-gossipsub";
 import { PeerId } from "@libp2p/interface";
 
@@ -62,12 +62,17 @@ async function main() {
   await client2.dial(relayP2pAddress1, { signal: AbortSignal.timeout(15000) });
   console.log("Both client nodes connected.");
 
-  const z = client1.services.dht.findPeer(client2.peerId, {
+  const testAddress: string = "12D3KooWEMdqy8sUoS1ReDRQ2obyE8tNcguGsft41JBK1ors6xdZ";
+  const queryResults: AsyncIterable<QueryEvent> = client1.services.dht.findPeer(client2.peerId, {
     signal: AbortSignal.timeout(15000),
   });
 
-  for await (const event of z) {
-    console.log("DHT event:", event);
+  let foundPeerAddresses: Multiaddr[] = undefined!;
+  for await (const event of queryResults) {
+    if (event.name === "FINAL_PEER") {
+      foundPeerAddresses = event.peer.multiaddrs;
+      break;
+    }
   }
 
   const key: string = crypto.randomUUID();
