@@ -17,7 +17,7 @@ import { AbortOptions, multiaddr, Multiaddr } from "@multiformats/multiaddr";
 import { WebRTC, WebSockets, P2P, WebRTCDirect } from "@multiformats/multiaddr-matcher";
 
 import { DialPeerEvent, kadDHT, QueryEvent } from "@libp2p/kad-dht";
-import { gossipsub } from "@chainsafe/libp2p-gossipsub";
+import { gossipsub, GossipSub } from "@chainsafe/libp2p-gossipsub";
 import { mdns } from "@libp2p/mdns";
 
 import { peerIdFromPrivateKey, peerIdFromCID, peerIdFromString } from "@libp2p/peer-id";
@@ -25,6 +25,7 @@ import {
   Connection,
   EventHandler,
   Libp2pEvents,
+  Message,
   Peer,
   PeerId,
   PeerInfo,
@@ -34,7 +35,7 @@ import {
   Stream,
   StreamHandler,
 } from "@libp2p/interface";
-// import { ConnectionManager, Registrar } from "@libp2p/interface-internal";
+import { ConnectionManager, Registrar } from "@libp2p/interface-internal";
 // import { convertPeerId } from "@libp2p/kad-dht/dist/src/utils";
 
 import { fromString, toString } from "uint8arrays";
@@ -42,7 +43,10 @@ import { Uint8ArrayList } from "uint8arraylist";
 import { pipe } from "it-pipe";
 
 import { ed25519, x25519 } from "@noble/curves/ed25519.js";
+import { blake2b } from "@noble/hashes/blake2";
+
 import { keys } from "@libp2p/crypto";
+import { Components } from "libp2p/dist/src/components";
 
 // Known peers addresses
 const bootstrapList = [
@@ -63,36 +67,64 @@ function assert(condition: unknown, message?: string): asserts condition {
   }
 }
 
-type Payload = ChallengeRequest | ChallengeResponse;
+interface Envelope {
+  sender: string;
+  recipient: string;
+  message: string;
+  timestamp: number;
+}
+
+type Payload = ChallengeRequest | ChallengeResponse | SendMessage | CheckMessageBox | PackageDelivery;
 
 interface ChallengeRequest {
-  callbackId: string;
   type: "whats_the_password";
+  callbackId: string;
   challenge: string;
 }
 
 interface ChallengeResponse {
-  callbackId: string;
   type: "open_sesame";
-  challenge: string;
+  callbackId: string;
   response: string;
 }
 
-class HandshakeProto implements Startable {
-  public static readonly protocol: string = "/handshake/proto/0.1.0";
+interface SendMessage {
+  type: "deliver_this_message_and_make_it_snappy";
+  messages: Envelope[];
+}
 
-  private privateKey: Uint8Array = new Uint8Array(32);
-  private publicKey: Uint8Array;
+interface CheckMessageBox {
+  type: "hey_mailman_got_anything_for_me";
+  callbackId: string;
+  recipient: string;
+}
+
+interface PackageDelivery {
+  type: "just_the_usual_tell_the_misses_i_said_hi";
+  callbackId: string;
+  messages: Envelope[];
+}
+
+class HandshakeProto extends GossipSub {
+  public static readonly protocol: string = "/secret-handshake/proto/0.1.1";
+  private static readonly grip: Uint8Array = blake2b("Attractor-Impolite-Oversold", { dkLen: 32 });
+  private static readonly dueGuard: Uint8Array = ed25519.getPublicKey(HandshakeProto.grip);
+
+  private peerId: PeerId;
+  private connectionManager: ConnectionManager;
+  private registrar: Registrar;
 
   private callbackQueue: Map<string, (pl: Payload) => void> = new Map();
 
-  constructor(private readonly components: CustomComponents) {
-    this.privateKey.set(Buffer.from("AppleMango", "utf-8"));
-    this.publicKey = ed25519.getPublicKey(this.privateKey);
+  constructor(components: Components) {
+    super(components);
+    this.peerId = components.peerId;
+    this.connectionManager = components.connectionManager;
+    this.registrar = components.registrar;
   }
 
-  public static Handshake(): (components: CustomComponents) => HandshakeProto {
-    return (components: CustomComponents) => new HandshakeProto(components);
+  public static Handshake(): (components: Components) => HandshakeProto {
+    return (components: Components) => new HandshakeProto(components);
   }
 
   private static isPayload(payload: unknown): payload is Payload {
@@ -137,14 +169,18 @@ class HandshakeProto implements Startable {
     }
   }
 
-  private solveChallenge(challenge: ChallengeRequest): ChallengeResponse {
-    const challengeBuffer: Uint8Array = Buffer.from(challenge.challenge, "utf-8");
-    const response: Uint8Array = ed25519.sign(challengeBuffer, this.privateKey);
-    return { ...challenge, type: "open_sesame", response: Buffer.from(response).toString("hex") };
+  private solveChallenge({ callbackId, challenge }: ChallengeRequest): ChallengeResponse {
+    const challengeBuffer: Uint8Array = Buffer.from(challenge, "utf-8");
+    const response: Uint8Array = ed25519.sign(challengeBuffer, HandshakeProto.grip);
+    return { type: "open_sesame", callbackId, response: Buffer.from(response).toString("hex") };
+  }
+
+  private handleMessageEvent(event: CustomEvent<Message>): void {
+    console.log("You've got mail:", event);
   }
 
   async start(): Promise<void> {
-    await this.components.registrar.handle(HandshakeProto.protocol, async ({ connection, stream }) => {
+    await this.registrar.handle(HandshakeProto.protocol, async ({ connection, stream }: any) => {
       const rawMessage: string = await HandshakeProto.decodeStream(stream);
       stream.close();
 
@@ -156,47 +192,50 @@ class HandshakeProto implements Startable {
           return;
         }
       } catch {
-        console.warn("Invalid payload.");
+        console.warn("Invalid payload.", rawMessage);
         return;
       }
 
       switch (payload.type) {
         case "whats_the_password": {
-          const response = this.solveChallenge(payload);
+          const response: ChallengeResponse = this.solveChallenge(payload);
           await HandshakeProto.sendPayload(connection, response);
           break;
         }
         case "open_sesame": {
-          const callback = this.callbackQueue.get(payload.callbackId);
-          callback?.(payload);
+          this.callbackQueue.get(payload.callbackId)?.(payload);
           break;
         }
       }
     });
+
+    this.addEventListener("message", this.handleMessageEvent.bind(this));
   }
 
   async stop(): Promise<void> {
+    this.removeEventListener("message", this.handleMessageEvent.bind(this));
+
     this.callbackQueue.clear();
-    await this.components.registrar.unhandle(HandshakeProto.protocol);
+    await this.registrar.unhandle(HandshakeProto.protocol);
   }
 
   public async sendChallenge(peerId: PeerId | Multiaddr | Multiaddr[], options?: AbortOptions): Promise<void> {
     const callbackId: string = crypto.randomUUID();
     const challenge: string = crypto.randomUUID();
-    const payload: ChallengeRequest = { callbackId, type: "whats_the_password", challenge };
+    const payload: ChallengeRequest = { type: "whats_the_password", callbackId, challenge };
 
-    const connection: Connection = await this.components.connectionManager.openConnection(peerId, options);
+    const connection: Connection = await this.connectionManager.openConnection(peerId, options);
     await HandshakeProto.sendPayload(connection, payload, options);
 
     this.callbackQueue.set(callbackId, async (pl: Payload) => {
       assert(HandshakeProto.isPayload(pl), "Invalid payload received");
       assert(pl.type === "open_sesame", "Expected open_sesame response");
       assert(pl.callbackId === callbackId, "Callback ID mismatch");
-      assert(pl.challenge === challenge, "Challenge mismatch");
 
       const responseBuffer: Uint8Array = fromString(pl.response, "hex");
-      const challengeBuffer: Uint8Array = fromString(pl.challenge, "utf-8");
-      const isValidResponse: boolean = ed25519.verify(responseBuffer, challengeBuffer, this.publicKey);
+      const challengeBuffer: Uint8Array = fromString(challenge, "utf-8");
+
+      const isValidResponse: boolean = ed25519.verify(responseBuffer, challengeBuffer, HandshakeProto.dueGuard);
       if (!isValidResponse) {
         console.error(`Invalid response for callback ID: ${callbackId}`);
         await connection.close();
@@ -204,6 +243,19 @@ class HandshakeProto implements Startable {
 
       this.callbackQueue.delete(callbackId);
     });
+  }
+
+  public async sendMessage(destination: PeerId | Multiaddr | Multiaddr[], message: string, options?: AbortOptions) {
+    const connection: Connection = await this.connectionManager.openConnection(destination, options);
+    const recipient: string = connection.remotePeer.toString();
+
+    const sender: string = this.peerId.toString();
+    const envelope: Envelope = { sender, recipient, message, timestamp: Date.now() };
+
+    const payload: SendMessage = {
+      type: "deliver_this_message_and_make_it_snappy",
+      messages: [envelope],
+    };
   }
 }
 
@@ -227,7 +279,6 @@ async function getNewClient(addresses: string[], privateKey?: PrivateKey) {
       dht: kadDHT(),
       identify: identify(),
       ping: ping(),
-      pubsub: gossipsub(),
       handshake: HandshakeProto.Handshake(),
     },
   });
@@ -246,12 +297,12 @@ async function main() {
   const client = await getNewClient(listeners);
   await client.start();
 
-  const magicWord: string = "DiscoMagic";
-  client.services.pubsub.subscribe(magicWord);
+  // const magicWord: string = "DiscoMagic";
+  // client.services.pubsub.subscribe(magicWord);
 
-  client.services.pubsub.addEventListener("gossipsub:message", ({ detail }) => {
-    console.log(detail);
-  });
+  // client.services.pubsub.addEventListener("gossipsub:message", ({ detail }) => {
+  //   console.log(detail);
+  // });
 
   client.addEventListener("peer:identify", async ({ detail }) => {
     if (!detail.protocols.includes(HandshakeProto.protocol)) {
@@ -263,18 +314,19 @@ async function main() {
     await client.services.handshake.sendChallenge(detail.peerId);
   });
 
-  while (client.getPeers().length < 1) {
+  while (client.getPeers().length < 10) {
     console.log(client.getPeers().length, "peers connected");
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   console.log("Bootstrapped with peers:", client.getPeers().length);
-  while (client.services.pubsub.getSubscribers(magicWord).length < 1) {
-    console.log(client.getPeers().length, "peers connected");
-    console.log(client.services.pubsub.getSubscribers(magicWord).length, "subscribers");
-    await new Promise((resolve) => setTimeout(resolve, 10000));
-  }
 
-  await client.services.pubsub.publish(magicWord, Buffer.from("Hello, Disco!", "utf-8"));
+  // while (client.services.pubsub.getSubscribers(magicWord).length < 1) {
+  //   console.log(client.getPeers().length, "peers connected");
+  //   console.log(client.services.pubsub.getSubscribers(magicWord).length, "subscribers");
+  //   await new Promise((resolve) => setTimeout(resolve, 10000));
+  // }
+
+  // await client.services.pubsub.publish(magicWord, Buffer.from("Hello, Disco!", "utf-8"));
 
   await new Promise((resolve) => setTimeout(resolve, 5000));
 
