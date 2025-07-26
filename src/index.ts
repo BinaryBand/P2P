@@ -10,7 +10,7 @@ import { ping } from "@libp2p/ping";
 import { persistentPeerStore } from "@libp2p/peer-store";
 
 import { circuitRelayServer, circuitRelayTransport } from "@libp2p/circuit-relay-v2";
-import { webRTCDirect } from "@libp2p/webrtc";
+import { webRTC, webRTCDirect } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
 
 import { AbortOptions, multiaddr, Multiaddr } from "@multiformats/multiaddr";
@@ -121,10 +121,20 @@ class HandshakeProto implements Startable {
   }
 
   private static async sendPayload(connection: Connection, payload: Payload, options?: AbortOptions): Promise<void> {
-    const outgoing: Stream = await connection.newStream(HandshakeProto.protocol, options);
-    const payloadString: string = JSON.stringify(payload);
-    await pipe([Buffer.from(payloadString)], outgoing);
-    outgoing.close();
+    if (connection.status !== "open") {
+      console.warn("Connection is not open");
+      return;
+    }
+
+    try {
+      const outgoing: Stream = await connection.newStream(HandshakeProto.protocol, options);
+      const payloadString: string = JSON.stringify(payload);
+      await pipe([Buffer.from(payloadString)], outgoing);
+      outgoing.close();
+    } catch {
+      console.warn("Failed to send payload:", payload);
+      connection.close();
+    }
   }
 
   private solveChallenge(challenge: ChallengeRequest): ChallengeResponse {
@@ -138,9 +148,15 @@ class HandshakeProto implements Startable {
       const rawMessage: string = await HandshakeProto.decodeStream(stream);
       stream.close();
 
-      const payload: Payload = JSON.parse(rawMessage);
-      if (!HandshakeProto.isPayload(payload)) {
-        console.warn("Invalid payload received:", payload);
+      let payload: Payload;
+      try {
+        payload = JSON.parse(rawMessage);
+        if (!HandshakeProto.isPayload(payload)) {
+          console.warn("Invalid payload received:", payload);
+          return;
+        }
+      } catch {
+        console.warn("Invalid payload.");
         return;
       }
 
@@ -198,13 +214,13 @@ const stockOptions = {
 
 const clientOptions = {
   ...stockOptions,
-  transports: [circuitRelayTransport(), webRTCDirect(), webSockets()],
+  transports: [circuitRelayTransport(), webRTC(), webRTCDirect(), webSockets()],
 };
 
 async function getNewClient(addresses: string[], privateKey?: PrivateKey) {
   return createLibp2p({
     ...clientOptions,
-    addresses: { listen: [...addresses, "/p2p-circuit"] },
+    addresses: { listen: [...addresses, "/p2p-circuit", "/webrtc"] },
     peerDiscovery: [mdns()],
     privateKey,
     services: {
@@ -226,8 +242,16 @@ async function main() {
   const peerId: PeerId = peerIdFromPrivateKey(privateKey);
   console.log("Peer ID:", peerId.toString());
 
-  const client = await getNewClient(["/ip4/0.0.0.0/udp/1/webrtc-direct"], privateKey);
+  const listeners: string[] = ["/ip4/0.0.0.0/udp/4998/webrtc-direct", "/ip4/127.0.0.1/tcp/0/ws"];
+  const client = await getNewClient(listeners);
   await client.start();
+
+  const magicWord: string = "DiscoMagic";
+  client.services.pubsub.subscribe(magicWord);
+
+  client.services.pubsub.addEventListener("gossipsub:message", ({ detail }) => {
+    console.log(detail);
+  });
 
   client.addEventListener("peer:identify", async ({ detail }) => {
     if (!detail.protocols.includes(HandshakeProto.protocol)) {
@@ -239,11 +263,20 @@ async function main() {
     await client.services.handshake.sendChallenge(detail.peerId);
   });
 
-  while (client.getPeers().length < 10) {
+  while (client.getPeers().length < 1) {
     console.log(client.getPeers().length, "peers connected");
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   console.log("Bootstrapped with peers:", client.getPeers().length);
+  while (client.services.pubsub.getSubscribers(magicWord).length < 1) {
+    console.log(client.getPeers().length, "peers connected");
+    console.log(client.services.pubsub.getSubscribers(magicWord).length, "subscribers");
+    await new Promise((resolve) => setTimeout(resolve, 10000));
+  }
+
+  await client.services.pubsub.publish(magicWord, Buffer.from("Hello, Disco!", "utf-8"));
+
+  await new Promise((resolve) => setTimeout(resolve, 5000));
 
   console.log("Stopping application...");
   await client.stop();
