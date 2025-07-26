@@ -73,18 +73,12 @@ class Echo implements Startable, EchoInterface {
 
   async echo(peer: PeerId | Multiaddr | Multiaddr[], buf: Uint8Array, options?: AbortOptions): Promise<Uint8Array> {
     const conn = await this.components.connectionManager.openConnection(peer, options);
-    const stream = await conn.newStream(this.protocol, {
-      ...this.init,
-      ...options,
-    });
+    const stream = await conn.newStream(this.protocol, { ...this.init, ...options });
     const bytes = byteStream(stream);
 
     const [, output] = await Promise.all([
       bytes.write(buf, options),
-      bytes.read({
-        ...options,
-        bytes: buf.byteLength,
-      }),
+      bytes.read({ ...options, bytes: buf.byteLength }),
     ]);
 
     await stream.close(options);

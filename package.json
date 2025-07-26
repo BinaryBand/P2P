@@ -23,8 +23,10 @@
     "@libp2p/echo": "^2.1.27",
     "@libp2p/identify": "^3.0.38",
     "@libp2p/kad-dht": "^15.1.10",
+    "@libp2p/mdns": "^11.0.46",
     "@libp2p/webrtc": "^5.2.23",
     "@libp2p/websockets": "^9.2.18",
+    "@noble/curves": "^1.9.4",
     "libp2p": "^2.9.0"
   }
 }

@@ -5,6 +5,7 @@
     "Encrypters",
     "gossipsub",
     "libp2p",
+    "mult",
     "Multiaddr",
     "Multiaddrs",
     "multiformats",
