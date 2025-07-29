@@ -1,132 +1,206 @@
-import { createLibp2p, Libp2p } from "libp2p";
+import { AbortOptions, Multiaddr } from "@multiformats/multiaddr";
 
-import { bootstrap } from "@libp2p/bootstrap";
-
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
-
-import { identify } from "@libp2p/identify";
-import { ping } from "@libp2p/ping";
-
-import { circuitRelayServer, circuitRelayTransport } from "@libp2p/circuit-relay-v2";
-import { webRTC, webRTCDirect } from "@libp2p/webrtc";
-import { webSockets } from "@libp2p/websockets";
-
-import { AbortOptions, multiaddr, Multiaddr } from "@multiformats/multiaddr";
-import { WebRTC, WebSockets, P2P, WebRTCDirect } from "@multiformats/multiaddr-matcher";
-
-import { DialPeerEvent, kadDHT, QueryEvent } from "@libp2p/kad-dht";
-import { gossipsub } from "@chainsafe/libp2p-gossipsub";
-
-import { peerIdFromPrivateKey, peerIdFromCID, peerIdFromString } from "@libp2p/peer-id";
-import { PeerId, PrivateKey, Startable, Stream } from "@libp2p/interface";
-import { convertPeerId } from "@libp2p/kad-dht/dist/src/utils";
-import { keys } from "@libp2p/crypto";
-
-import { pipe } from "it-pipe";
 import { fromString, toString } from "uint8arrays";
 import { Uint8ArrayList } from "uint8arraylist";
+import { pipe } from "it-pipe";
 
-type Payload = HandshakeRequest;
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { blake2b } from "@noble/hashes/blake2";
 
-interface HandshakeRequest {
-  type: "handshake_request";
-  peerId: string;
+import {
+  Connection,
+  IdentifyResult,
+  IncomingStreamData,
+  Libp2pEvents,
+  PeerId,
+  Startable,
+  Stream,
+  TypedEventEmitter,
+  TypedEventTarget,
+} from "@libp2p/interface";
+import { ConnectionManager, Registrar } from "@libp2p/interface-internal";
+import { Components } from "libp2p/dist/src/components";
+
+import { assert } from "./utils.js";
+import { GossipSub } from "@chainsafe/libp2p-gossipsub";
+
+enum PayloadType {
+  ChallengeRequest = "whats_the_password",
+  ChallengeResponse = "open_sesame",
 }
 
-function isPayload(payload: unknown): payload is Payload {
-  return typeof payload === "object" && payload !== null && "type" in payload;
+type Payload = ChallengeRequest | ChallengeResponse;
+
+interface ChallengeRequest {
+  callbackId: string;
+  challenge: string;
+  type: PayloadType.ChallengeRequest;
 }
 
-class CustomProto implements Startable {
-  public static readonly protocol = "/custom/proto/1.0.0";
+interface ChallengeResponse {
+  callbackId: string;
+  response: string;
+  type: PayloadType.ChallengeResponse;
+}
 
-  public static customProto(): (components: CustomComponents) => CustomProto {
-    return (components: CustomComponents) => new CustomProto(components);
+interface HandshakeComponents extends Components {
+  connectionManager: ConnectionManager;
+  registrar: Registrar;
+}
+
+const PREFERRED_ENCODING: string = "utf-8";
+
+export interface HandshakeEvents extends Libp2pEvents {
+  "handshake:challenge": CustomEvent<ChallengeRequest>;
+  "handshake:response": CustomEvent<ChallengeResponse>;
+}
+
+export default class HandshakeProto extends TypedEventEmitter<HandshakeEvents> implements Startable {
+  public static readonly protocol: string = "/secret-handshake/proto/0.1.3";
+  private static readonly initiation: string = "Attractor-Impolite-Oversold";
+  private static readonly grip: Uint8Array = blake2b(HandshakeProto.initiation, { dkLen: 32 });
+
+  private connectionManager: ConnectionManager;
+  private events: TypedEventTarget<Libp2pEvents>;
+  private registrar: Registrar;
+
+  private callbackQueue: Map<string, (pl: Payload) => void> = new Map();
+
+  constructor(components: Components) {
+    super();
+    this.connectionManager = components.connectionManager;
+    this.events = components.events;
+    this.registrar = components.registrar;
   }
 
-  constructor(private readonly components: CustomComponents) {}
+  public static Handshake(): (params: HandshakeComponents) => HandshakeProto {
+    return (params: HandshakeComponents) => new HandshakeProto(params);
+  }
 
-  private async parseIncomingStream(stream: Stream): Promise<string> {
+  private static isHandshakePayload(payload: unknown): payload is Payload {
+    if (!payload || typeof payload !== "object" || !("type" in payload)) {
+      return false;
+    }
+    switch (payload.type) {
+      case PayloadType.ChallengeRequest:
+        return "callbackId" in payload && "challenge" in payload;
+      case PayloadType.ChallengeResponse:
+        return "callbackId" in payload && "response" in payload;
+      default:
+        return false;
+    }
+  }
+
+  private static async decodeStream(stream: Stream): Promise<string> {
     return await pipe(stream, async (source: AsyncGenerator<Uint8ArrayList>) => {
       let message: string = "";
       for await (const data of source) {
-        const partials: string[] = [...data].map((arr) => toString(arr, "utf-8"));
+        const partials: string[] = [...data].map((bit: Uint8Array) => toString(bit, "utf-8"));
         message += partials.join("");
       }
       return message;
     });
   }
 
+  private static async sendPayload(connection: Connection, payload: Payload, options?: AbortOptions): Promise<void> {
+    try {
+      const outgoing: Stream = await connection.newStream(HandshakeProto.protocol, options);
+      const payloadString: string = JSON.stringify(payload);
+      await pipe([fromString(payloadString, PREFERRED_ENCODING)], outgoing);
+      outgoing.close();
+    } catch {
+      console.warn("Failed to send payload:", payload);
+      connection.close();
+    }
+  }
+
+  private solveChallenge({ detail }: CustomEvent<ChallengeRequest>): ChallengeResponse {
+    const { callbackId, challenge } = detail;
+    const challengeBuffer: Uint8Array = fromString(challenge, PREFERRED_ENCODING);
+    const response: Uint8Array = ed25519.sign(challengeBuffer, HandshakeProto.grip);
+    const responseBuffer: string = toString(response, PREFERRED_ENCODING);
+    return { callbackId, response: responseBuffer, type: PayloadType.ChallengeResponse };
+  }
+
+  private verifyChallengeResponse({ detail }: CustomEvent<ChallengeResponse>): void {
+    this.callbackQueue.get(detail.callbackId)?.(detail);
+  }
+
+  private initiateHandshake({ detail }: CustomEvent<IdentifyResult>): void {
+    if (!detail.protocols.includes(HandshakeProto.protocol)) {
+      console.warn(`Peer ${detail.peerId} does not support the handshake protocol`);
+      detail.connection.close();
+      return;
+    }
+
+    this.sendChallenge(detail.peerId);
+  }
+
+  private async sendChallenge(peerId: PeerId | Multiaddr | Multiaddr[], options?: AbortOptions): Promise<void> {
+    const callbackId: string = crypto.randomUUID();
+    const challenge: string = crypto.randomUUID();
+    const payload: ChallengeRequest = { callbackId, challenge, type: PayloadType.ChallengeRequest };
+
+    const connection: Connection = await this.connectionManager.openConnection(peerId, options);
+    await HandshakeProto.sendPayload(connection, payload, options);
+
+    const callback = async (pl: Payload) => {
+      assert(HandshakeProto.isHandshakePayload(pl), "Invalid payload received");
+      assert(pl.type === PayloadType.ChallengeResponse, "Expected open_sesame response");
+
+      const dueGuard: Uint8Array = ed25519.getPublicKey(HandshakeProto.grip);
+      const challengeBuffer: Uint8Array = fromString(challenge, PREFERRED_ENCODING);
+      const responseBuffer: Uint8Array = fromString(pl.response, PREFERRED_ENCODING);
+
+      if (!ed25519.verify(responseBuffer, challengeBuffer, dueGuard)) {
+        console.warn(`Invalid response for callback ID: ${callbackId}`);
+        await connection.close();
+      } else {
+        this.callbackQueue.delete(callbackId);
+      }
+    };
+
+    this.callbackQueue.set(callbackId, callback);
+  }
+
+  private async onIncomingStream({ stream }: IncomingStreamData): Promise<void> {
+    const rawMessage: string = await HandshakeProto.decodeStream(stream);
+    stream.close();
+
+    let payload: Payload;
+    try {
+      payload = JSON.parse(rawMessage);
+      if (!HandshakeProto.isHandshakePayload(payload)) {
+        console.warn("Invalid payload received:", payload);
+        return;
+      }
+    } catch {
+      console.warn("Invalid payload.", rawMessage);
+      return;
+    }
+
+    switch (payload.type) {
+      case PayloadType.ChallengeRequest:
+        this.dispatchEvent(new CustomEvent("handshake:challenge", { detail: payload }));
+        break;
+      case PayloadType.ChallengeResponse:
+        this.dispatchEvent(new CustomEvent("handshake:response", { detail: payload }));
+        break;
+    }
+  }
+
   public async start(): Promise<void> {
-    await this.components.registrar.handle(CustomProto.protocol, async ({ stream }) => {
-      const rawMessage: string = await this.parseIncomingStream(stream);
-
-      const payload: Payload = JSON.parse(rawMessage);
-      if (!isPayload(payload)) {
-        return stream.close();
-      }
-
-      switch (payload.type) {
-        case "handshake_request":
-          console.log("Introducing:", payload.peerId);
-          break;
-        default:
-          console.error(payload);
-          throw new Error(`Unknown payload type: ${payload.type}`);
-      }
-    });
-
-    console.log("Custom protocol started");
+    this.events.addEventListener("peer:identify", this.initiateHandshake.bind(this));
+    this.addEventListener("handshake:challenge", this.solveChallenge.bind(this));
+    this.addEventListener("handshake:response", this.verifyChallengeResponse.bind(this));
+    await this.registrar.handle(HandshakeProto.protocol, this.onIncomingStream.bind(this));
   }
 
   public async stop(): Promise<void> {
-    await this.components.registrar.unhandle(CustomProto.protocol);
-    console.log("Custom protocol stopped");
+    this.events.removeEventListener("peer:identify", this.initiateHandshake.bind(this));
+    this.removeEventListener("handshake:challenge", this.solveChallenge.bind(this));
+    this.removeEventListener("handshake:response", this.verifyChallengeResponse.bind(this));
+    await this.registrar.unhandle(HandshakeProto.protocol);
+    this.callbackQueue.clear();
   }
 }
-
-const stockOptions = {
-  connectionEncrypters: [noise()],
-  streamMuxers: [yamux()],
-};
-
-const clientOptions = {
-  ...stockOptions,
-  services: { customProto: CustomProto.customProto() },
-  transports: [webRTCDirect()],
-};
-
-async function main() {
-  console.log("Starting application...");
-
-  const seed: Uint8Array = new Uint8Array(32);
-  seed.set(Buffer.from("AppleMango"));
-  const privateKey: PrivateKey = await keys.generateKeyPairFromSeed("Ed25519", seed);
-
-  const client1 = await createLibp2p({
-    ...clientOptions,
-    addresses: { listen: ["/ip4/0.0.0.0/udp/1/webrtc-direct"] },
-    privateKey,
-  });
-  const client2 = await createLibp2p({ ...clientOptions, addresses: { listen: ["/ip4/0.0.0.0/udp/2/webrtc-direct"] } });
-  console.log("Client1 ID:", client1.peerId.toString());
-  console.log("Client2 ID:", client2.peerId.toString());
-
-  // Send a message using the custom protocol
-  const introduction: HandshakeRequest = { type: "handshake_request", peerId: client1.peerId.toString() };
-  const stream: Stream = await client1.dialProtocol(client2.getMultiaddrs(), CustomProto.protocol);
-  await pipe([fromString(JSON.stringify(introduction))], stream);
-
-  // Stop the client nodes
-  await client1.stop();
-  await client2.stop();
-  console.log("Stop both nodes.");
-
-  process.exit(0);
-}
-
-main().catch((error) => {
-  console.error("An error occurred:", error);
-  process.exit(1);
-});
