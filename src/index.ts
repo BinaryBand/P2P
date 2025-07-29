@@ -15,7 +15,6 @@ import { PeerId, PrivateKey } from "@libp2p/interface";
 import { keys } from "@libp2p/crypto";
 
 import HandshakeProto from "./handshake.js";
-import { gossipsub } from "@chainsafe/libp2p-gossipsub";
 
 const stockOptions = {
   connectionEncrypters: [noise()],
@@ -33,10 +32,7 @@ async function getNewClient(addresses: string[], privateKey?: PrivateKey) {
     addresses: { listen: [...addresses, "/p2p-circuit", "/webrtc"] },
     peerDiscovery: [mdns()],
     privateKey,
-    services: {
-      handshake: HandshakeProto.Handshake(),
-      identify: identify(),
-    },
+    services: { handshake: HandshakeProto.Handshake(), identify: identify() },
   });
 }
 
@@ -49,23 +45,29 @@ async function main() {
   const peerId: PeerId = peerIdFromPrivateKey(privateKey);
   console.log("Peer ID:", peerId.toString());
 
-  const client = await getNewClient(["/ip4/0.0.0.0/udp/4998/webrtc-direct"], privateKey);
-  const neighbor = await getNewClient(["/ip4/0.0.0.0/udp/4999/webrtc-direct"]);
+  const client = await getNewClient(["/ip4/0.0.0.0/udp/4999/webrtc-direct"], privateKey);
+  const nodes = await Promise.all([
+    getNewClient(["/ip4/0.0.0.0/udp/5000/webrtc-direct"]),
+    getNewClient(["/ip4/0.0.0.0/udp/5001/webrtc-direct"]),
+    getNewClient(["/ip4/0.0.0.0/udp/5002/webrtc-direct"]),
+  ]);
 
   await client.start();
-  await neighbor.start();
+  await Promise.all(nodes.map((node) => node.start()));
 
-  while (client.getPeers().length < 3) {
+  while (client.getPeers().length < 1) {
     console.log(client.getPeers().length, "peers connected");
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   console.log("Bootstrapped with peers:", client.getPeers().length);
 
-  await new Promise((resolve) => setTimeout(resolve, 5000));
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+
+  await new Promise((resolve) => setTimeout(resolve, 7500));
 
   console.log("Stopping application...");
   await client.stop();
-  await neighbor.stop();
+  await Promise.all(nodes.map((node) => node.stop()));
   process.exit(0);
 }
 
