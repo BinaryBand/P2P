@@ -50,6 +50,8 @@ async function main() {
     getNewClient(["/ip4/0.0.0.0/udp/5000/webrtc-direct"]),
     getNewClient(["/ip4/0.0.0.0/udp/5001/webrtc-direct"]),
     getNewClient(["/ip4/0.0.0.0/udp/5002/webrtc-direct"]),
+    getNewClient(["/ip4/0.0.0.0/udp/5003/webrtc-direct"]),
+    getNewClient(["/ip4/0.0.0.0/udp/5004/webrtc-direct"]),
   ]);
 
   await client.start();
@@ -63,7 +65,19 @@ async function main() {
 
   await new Promise((resolve) => setTimeout(resolve, 2500));
 
-  await new Promise((resolve) => setTimeout(resolve, 7500));
+  await client.services.handshake.sendMessage(nodes[0].peerId, "Hello from client!", {
+    signal: AbortSignal.timeout(5000),
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+
+  nodes[0].services.handshake.addEventListener("handshake:dropoff", ({ detail }) => {
+    console.log("Received inbox dropoff:", detail.inbox.length, "messages", detail.inbox);
+  });
+
+  await nodes[0].services.handshake.requestInbox({ signal: AbortSignal.timeout(5000) });
+
+  await new Promise((resolve) => setTimeout(resolve, 2500));
 
   console.log("Stopping application...");
   await client.stop();
