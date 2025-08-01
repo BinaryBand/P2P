@@ -71,6 +71,13 @@ export function isPayload(payload: unknown): payload is Payload {
       return "n" in payload && typeof payload.n === "number" && "query" in payload && typeof payload.query === "string";
     case SwarmTypes.NearestPeersResponse:
       return "peers" in payload && Array.isArray(payload.peers) && payload.peers.every(isValidId);
+    case SwarmTypes.StoreMessageRequest:
+      return (
+        "destination" in payload &&
+        isValidId(payload.destination) &&
+        "message" in payload &&
+        typeof payload.message === "string"
+      );
     default:
       return false;
   }

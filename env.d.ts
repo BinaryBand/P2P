@@ -11,7 +11,13 @@ type Rejection = {
   success: false;
 };
 
-type Payload = EmptyPayload | ChallengeRequest | ChallengeResponse | NearestPeersRequest | NearestPeersResponse;
+type Payload =
+  | EmptyPayload
+  | ChallengeRequest
+  | ChallengeResponse
+  | NearestPeersRequest
+  | NearestPeersResponse
+  | StoreMessageRequest;
 
 interface EmptyPayload {
   type: import("./src/base-proto").BaseTypes.EmptyPayload;
@@ -36,4 +42,10 @@ interface NearestPeersRequest {
 interface NearestPeersResponse {
   peers: string[];
   type: import("./src/swarm-proto").SwarmTypes.NearestPeersResponse;
+}
+
+interface StoreMessageRequest {
+  destination: string;
+  message: string;
+  type: import("./src/swarm-proto").SwarmTypes.StoreMessageRequest;
 }

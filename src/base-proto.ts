@@ -1,7 +1,6 @@
 import { Connection, IncomingStreamData, PeerId, Stream, TypedEventEmitter } from "@libp2p/interface";
 import { ConnectionManager, Registrar } from "@libp2p/interface-internal";
 import { Components } from "libp2p/dist/src/components";
-import { AbortOptions } from "@multiformats/multiaddr";
 
 import { Uint8ArrayList } from "uint8arraylist";
 import { blake2b } from "@noble/hashes/blake2";
@@ -21,18 +20,19 @@ function newRejection(callbackId: string, message: string = ""): Rejection {
   return { callbackId, message, success: false };
 }
 
+function newSuccess(callbackId: string): Parcel<EmptyPayload> {
+  const payload: EmptyPayload = { type: BaseTypes.EmptyPayload };
+  return { callbackId, from: "", payload, success: true };
+}
+
 export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
   public static readonly PROTOCOL: string = "/secret-handshake/proto/0.3.0";
   private static readonly LIMIT: number = 32;
-  private static readonly TIMEOUT: number = 5_000;
+  private static readonly TIMEOUT: number = 30_000;
 
   private connectionManager: ConnectionManager;
   protected peerId: PeerId;
   private registrar: Registrar;
-
-  protected get address(): string {
-    return this.peerId.toString();
-  }
 
   private callbackQueue = new LRUCache<string, Callback>({ max: BaseProto.LIMIT, ttl: BaseProto.TIMEOUT });
   private limiterCache = new LRUCache<string, number>({ max: 2048, ttl: BaseProto.TIMEOUT });
@@ -44,11 +44,11 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
     this.registrar = components.registrar;
   }
 
-  private async getConnection(peerId: PeerId, opts?: AbortOptions): Promise<Connection> {
+  private async getConnection(peerId: PeerId): Promise<Connection> {
     const connections: Connection[] = this.connectionManager
       .getConnections(peerId)
       .filter(({ direction }) => direction === "outbound");
-    const connection: Connection = connections[0] ?? (await this.connectionManager.openConnection(peerId, opts));
+    const connection: Connection = connections[0] ?? (await this.connectionManager.openConnection(peerId));
     return connection;
   }
 
@@ -72,20 +72,16 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
     return BaseProto.byteArrayToString(chunks);
   }
 
-  private async sendParcelNoCallback<T extends Payload>(
-    peerId: PeerId,
-    parcel: Parcel<T>,
-    opts?: AbortOptions
-  ): Promise<void> {
-    const connection: Connection = await this.getConnection(peerId, opts);
-    const outgoing: Stream = await connection.newStream(BaseProto.PROTOCOL, opts);
+  private async sendParcelNoCallback<T extends Payload>(peerId: PeerId, parcel: Parcel<T>): Promise<void> {
+    const connection: Connection = await this.getConnection(peerId);
+    const outgoing: Stream = await connection.newStream(BaseProto.PROTOCOL);
     const parcelString: string = JSON.stringify(parcel);
     await pipe([Buffer.from(parcelString, "utf-8")], outgoing);
     outgoing.close();
   }
 
-  private async sendParcel<T extends Payload>(peerId: PeerId, parcel: Parcel, opts?: AbortOptions): Promise<Parcel<T>> {
-    await this.sendParcelNoCallback(peerId, parcel, opts);
+  private async sendParcel<T extends Payload>(peerId: PeerId, parcel: Parcel): Promise<Parcel<T>> {
+    await this.sendParcelNoCallback(peerId, parcel);
 
     return new Promise<Parcel<T>>((res): void => {
       const timeOut: NodeJS.Timeout = setTimeout((): void => {
@@ -95,34 +91,29 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
 
       this.callbackQueue.set(parcel.callbackId, (val: Parcel): void => {
         timeOut.close();
-
         this.callbackQueue.delete(parcel.callbackId);
         res(!val.success ? newRejection(val.callbackId, val.message) : (val as Parcel<T>));
       });
     });
   }
 
-  protected async sendPayload<T extends Payload>(
-    peerId: PeerId,
-    payload: Payload,
-    callbackId: string,
-    opts?: AbortOptions
-  ): Promise<T> {
-    const parcel: Parcel = { callbackId, from: this.address, payload, success: true };
-    const result: Parcel<T> = await this.sendParcel<T>(peerId, parcel, opts);
-    if (!result.success) throw new Error(result.message);
+  protected async sendPayload<T extends Payload>(peerId: PeerId, payload: Payload, callbackId: string): Promise<T> {
+    const parcel: Parcel = { callbackId, from: this.peerId.toString(), payload, success: true };
+    const result: Parcel<T> = await this.sendParcel<T>(peerId, parcel);
+
+    if (!result.success) {
+      throw new Error(result.message);
+    }
+
     return result.payload as T;
   }
 
-  protected sendConfirmation(peerId: PeerId, callbackId: string, opts?: AbortOptions): void {
-    const payload: EmptyPayload = { type: BaseTypes.EmptyPayload };
-    const parcel: Parcel<EmptyPayload> = { callbackId, from: this.address, payload, success: true };
-    this.sendParcelNoCallback(peerId, parcel, opts);
+  protected sendConfirmation(peerId: PeerId, callbackId: string): void {
+    this.sendParcelNoCallback(peerId, newSuccess(callbackId));
   }
 
-  protected sendRejection(peerId: PeerId, callbackId: string, msg: string, opts?: AbortOptions): void {
-    const parcel: Rejection = { callbackId, message: msg, success: false };
-    this.sendParcelNoCallback(peerId, parcel, opts);
+  protected sendRejection(peerId: PeerId, callbackId: string, msg: string): void {
+    this.sendParcelNoCallback(peerId, newRejection(callbackId, msg));
   }
 
   private exceedsRateLimit(peerId: PeerId): boolean {

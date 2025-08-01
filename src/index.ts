@@ -64,10 +64,18 @@ async function main() {
   console.log("Bootstrapped with peers:", client.getPeers().length);
 
   await new Promise((resolve) => setTimeout(resolve, 2500));
-  const targetAddress: string = "12D3KooWS59iP9GKVgWw6cS15BoobmtHoMzwUcxZ2ndg8tv4ddBr";
+  const targetAddress: string = nodes[4].peerId.toString();
   const nearestPeers = await client.services.proto.findNearestPeers(targetAddress);
   console.log("Nearest peers found:", nearestPeers);
-  await new Promise((resolve) => setTimeout(resolve, 25000));
+
+  const numStoredMessages: number = await client.services.proto.sendMessage(targetAddress, "Hello from the client!");
+  console.log(`Message sent to nearest peers: ${numStoredMessages}`);
+
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+
+  // Get messages
+
+  await new Promise((resolve) => setTimeout(resolve, 2500));
 
   console.log("Stopping application...");
   await client.stop();

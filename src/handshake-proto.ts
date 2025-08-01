@@ -51,7 +51,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   }
 
   private async initiateHandshake({ detail }: CustomEvent<IdentifyResult>): Promise<void> {
-    console.info(`${this.address}: Initiating handshake with peer: ${detail.peerId.toString()}`);
+    console.info(`${this.peerId}: Initiating handshake with peer: ${detail.peerId.toString()}`);
 
     const callbackId: string = crypto.randomUUID();
     const challengeBuffer: Uint8Array = crypto.getRandomValues(new Uint8Array(32));
@@ -68,18 +68,22 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       const dueGuard: Uint8Array = ed25519.getPublicKey(this.initiationToken);
       if (ed25519.verify(proofBuffer, challengeBuffer, dueGuard)) {
         this.sendConfirmation(detail.peerId, callbackId);
-        console.info(`${this.address}: Handshake with peer ${detail.peerId.toString()} completed successfully.`);
+        console.info(`${this.peerId}: Handshake with peer ${detail.peerId.toString()} completed successfully.`);
       } else {
         this.sendRejection(detail.peerId, callbackId, "Invalid proof provided");
-        console.info(`${this.address}: Handshake with peer ${detail.peerId.toString()} failed due to invalid proof.`);
+        console.info(`${this.peerId}: Handshake with peer ${detail.peerId.toString()} failed due to invalid proof.`);
       }
     } catch {
-      console.error(`${this.address}: Handshake with peer ${detail.peerId.toString()} failed`);
+      console.error(`${this.peerId}: Handshake with peer ${detail.peerId.toString()} failed`);
     }
   }
 
   private async onChallengeRequest({ detail }: CustomEvent<PackagedPayload<ChallengeRequest>>): Promise<void> {
-    const challengeBuffer: Uint8Array = bufferFromString(detail.payload.challenge);
+    const {
+      payload: { challenge },
+    } = detail;
+
+    const challengeBuffer: Uint8Array = bufferFromString(challenge);
     const proofBuffer: Uint8Array = ed25519.sign(challengeBuffer, this.initiationToken);
 
     const proofPayload: ChallengeResponse = {
@@ -94,7 +98,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       console.info(`${this.peerId}: Successfully connected to: ${detail.from}`);
     } catch (err) {
       this.sendRejection(peerId, detail.callbackId, "Failed to send challenge response");
-      console.warn(`${this.address}: Failed to send challenge response to peer: ${detail.from}`, err);
+      console.warn(`${this.peerId}: Failed to send challenge response to peer: ${detail.from}`, err);
     }
   }
 
