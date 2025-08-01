@@ -1,39 +1,38 @@
 import { createLibp2p } from "libp2p";
+import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
+import { webRTCDirect } from "@libp2p/webrtc";
+import { webSockets } from "@libp2p/websockets";
+import { identify } from "@libp2p/identify";
+import { mdns } from "@libp2p/mdns";
 
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 
-import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
-import { identify } from "@libp2p/identify";
-import { mdns } from "@libp2p/mdns";
-import { webRTCDirect } from "@libp2p/webrtc";
-import { webSockets } from "@libp2p/websockets";
-
 import { peerIdFromPrivateKey } from "@libp2p/peer-id";
 import { PeerId, PrivateKey } from "@libp2p/interface";
-
 import { keys } from "@libp2p/crypto";
 
-import HandshakeProto from "./handshake.js";
+import SwarmProto from "./swarm-proto.js";
 
 const stockOptions = {
   connectionEncrypters: [noise()],
+  peerDiscovery: [mdns()],
   streamMuxers: [yamux()],
-};
-
-const clientOptions = {
-  ...stockOptions,
   transports: [circuitRelayTransport(), webRTCDirect(), webSockets()],
 };
 
-async function getNewClient(addresses: string[], privateKey?: PrivateKey) {
-  return createLibp2p({
-    ...clientOptions,
+function getClientOptions(addresses: string[], privateKey?: PrivateKey) {
+  return {
+    ...stockOptions,
     addresses: { listen: [...addresses, "/p2p-circuit", "/webrtc"] },
-    peerDiscovery: [mdns()],
     privateKey,
-    services: { handshake: HandshakeProto.Handshake(), identify: identify() },
-  });
+    services: { identify: identify() },
+  };
+}
+
+function getNewClient(addresses: string[], privateKey?: PrivateKey) {
+  const options = getClientOptions(addresses, privateKey);
+  return createLibp2p({ ...options, services: { ...options.services, proto: SwarmProto.Swarm() } });
 }
 
 async function main() {
@@ -49,35 +48,26 @@ async function main() {
   const nodes = await Promise.all([
     getNewClient(["/ip4/0.0.0.0/udp/5000/webrtc-direct"]),
     getNewClient(["/ip4/0.0.0.0/udp/5001/webrtc-direct"]),
-    getNewClient(["/ip4/0.0.0.0/udp/5002/webrtc-direct"]),
+    createLibp2p(getClientOptions(["/ip4/0.0.0.0/udp/5002/webrtc-direct"])),
     getNewClient(["/ip4/0.0.0.0/udp/5003/webrtc-direct"]),
     getNewClient(["/ip4/0.0.0.0/udp/5004/webrtc-direct"]),
+    getNewClient(["/ip4/0.0.0.0/udp/5005/webrtc-direct"]),
   ]);
 
   await client.start();
   await Promise.all(nodes.map((node) => node.start()));
 
-  while (client.getPeers().length < 1) {
+  while (client.getPeers().length < 3) {
     console.log(client.getPeers().length, "peers connected");
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   console.log("Bootstrapped with peers:", client.getPeers().length);
 
   await new Promise((resolve) => setTimeout(resolve, 2500));
-
-  await client.services.handshake.sendMessage(nodes[0].peerId, "Hello from client!", {
-    signal: AbortSignal.timeout(5000),
-  });
-
-  await new Promise((resolve) => setTimeout(resolve, 2500));
-
-  nodes[0].services.handshake.addEventListener("handshake:dropoff", ({ detail }) => {
-    console.log("Received inbox dropoff:", detail.inbox.length, "messages", detail.inbox);
-  });
-
-  await nodes[0].services.handshake.requestInbox({ signal: AbortSignal.timeout(5000) });
-
-  await new Promise((resolve) => setTimeout(resolve, 2500));
+  const targetAddress: string = "12D3KooWS59iP9GKVgWw6cS15BoobmtHoMzwUcxZ2ndg8tv4ddBr";
+  const nearestPeers = await client.services.proto.findNearestPeers(targetAddress);
+  console.log("Nearest peers found:", nearestPeers);
+  await new Promise((resolve) => setTimeout(resolve, 25000));
 
   console.log("Stopping application...");
   await client.stop();

@@ -6,6 +6,7 @@
     "Encrypters",
     "gossipsub",
     "libp2p",
+    "mdns",
     "mult",
     "Multiaddr",
     "Multiaddrs",
