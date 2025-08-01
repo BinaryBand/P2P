@@ -68,12 +68,13 @@ async function main() {
   const nearestPeers = await client.services.proto.findNearestPeers(targetAddress);
   console.log("Nearest peers found:", nearestPeers);
 
-  const numStoredMessages: number = await client.services.proto.sendMessage(targetAddress, "Hello from the client!");
-  console.log(`Message sent to nearest peers: ${numStoredMessages}`);
+  await client.services.proto.sendMessage(targetAddress, "Hello from the client!");
+  console.log(`Message sent to nearest peer`);
 
   await new Promise((resolve) => setTimeout(resolve, 2500));
 
-  // Get messages
+  const messages = await nodes[4].services.proto.getMessages(targetAddress);
+  console.log(`Messages retrieved from ${targetAddress}:`, messages);
 
   await new Promise((resolve) => setTimeout(resolve, 2500));
 

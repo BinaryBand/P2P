@@ -7,9 +7,9 @@ const PREFERRED_ENCODING: BufferEncoding = "base64";
 export const bufferFromString = (input: string): Uint8Array => Buffer.from(input, PREFERRED_ENCODING);
 export const stringFromBuffer = (input: Uint8Array): string => Buffer.from(input).toString(PREFERRED_ENCODING);
 
-export function assert(condition: unknown, message?: string): asserts condition {
+export function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
-    throw new Error(message || "Assertion failed");
+    throw new Error(message);
   }
 }
 
@@ -39,23 +39,26 @@ function isValidEncodedValue(input: unknown): boolean {
   }
 }
 
-export function isValidParcel(parcel: unknown): parcel is PackagedPayload<Payload> {
+export function isValidParcel(parcel: unknown): parcel is Parcel {
   if (
     !parcel ||
     typeof parcel !== "object" ||
     !("callbackId" in parcel) ||
-    !("from" in parcel) ||
-    !("payload" in parcel) ||
-    !("success" in parcel)
+    !("success" in parcel) ||
+    !isValidUuid(parcel.callbackId) ||
+    typeof parcel.success !== "boolean"
   ) {
     return false;
   }
 
-  const { callbackId, from, payload, success } = parcel;
-  return isValidUuid(callbackId) && isValidId(from) && isPayload(payload) && typeof success === "boolean";
+  if (!parcel.success) {
+    return "message" in parcel && typeof parcel.message === "string";
+  }
+
+  return "from" in parcel && isValidId(parcel.from) && "payload" in parcel && isValidPayload(parcel.payload);
 }
 
-export function isPayload(payload: unknown): payload is Payload {
+export function isValidPayload(payload: unknown): payload is Payload {
   if (!payload || typeof payload !== "object" || !("type" in payload)) {
     return false;
   }
@@ -71,12 +74,21 @@ export function isPayload(payload: unknown): payload is Payload {
       return "n" in payload && typeof payload.n === "number" && "query" in payload && typeof payload.query === "string";
     case SwarmTypes.NearestPeersResponse:
       return "peers" in payload && Array.isArray(payload.peers) && payload.peers.every(isValidId);
-    case SwarmTypes.StoreMessageRequest:
+    case SwarmTypes.StoreMessagesRequest:
       return (
         "destination" in payload &&
         isValidId(payload.destination) &&
-        "message" in payload &&
-        typeof payload.message === "string"
+        "messages" in payload &&
+        Array.isArray(payload.messages) &&
+        payload.messages.every((msg: unknown) => typeof msg === "string")
+      );
+    case SwarmTypes.RetrieveMessagesRequest:
+      return "destination" in payload && isValidId(payload.destination);
+    case SwarmTypes.RetrieveMessagesResponse:
+      return (
+        "messages" in payload &&
+        Array.isArray(payload.messages) &&
+        payload.messages.every((msg: unknown) => typeof msg === "string")
       );
     default:
       return false;

@@ -1,3 +1,7 @@
+type Callback<T extends Payload = Payload> = (p: Parcel<T>) => void;
+
+type Parcel<T extends Payload = Payload> = PackagedPayload<T> | Rejection;
+
 type PackagedPayload<T extends Payload> = {
   callbackId: string;
   from: string;
@@ -17,7 +21,9 @@ type Payload =
   | ChallengeResponse
   | NearestPeersRequest
   | NearestPeersResponse
-  | StoreMessageRequest;
+  | StoreMessagesRequest
+  | RetrieveMessagesRequest
+  | RetrieveMessagesResponse;
 
 interface EmptyPayload {
   type: import("./src/base-proto").BaseTypes.EmptyPayload;
@@ -44,8 +50,23 @@ interface NearestPeersResponse {
   type: import("./src/swarm-proto").SwarmTypes.NearestPeersResponse;
 }
 
-interface StoreMessageRequest {
+interface StoreMessagesRequest {
   destination: string;
-  message: string;
-  type: import("./src/swarm-proto").SwarmTypes.StoreMessageRequest;
+  messages: string[];
+  type: import("./src/swarm-proto").SwarmTypes.StoreMessagesRequest;
+}
+
+interface RetrieveMessagesRequest {
+  destination: string;
+  type: import("./src/swarm-proto").SwarmTypes.RetrieveMessagesRequest;
+}
+
+interface RetrieveMessagesResponse {
+  messages: string[];
+  type: import("./src/swarm-proto").SwarmTypes.RetrieveMessagesResponse;
+}
+
+interface PeerDistancePair {
+  candidate: string;
+  distance: number;
 }

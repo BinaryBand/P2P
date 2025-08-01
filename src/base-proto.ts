@@ -75,9 +75,12 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
   private async sendParcelNoCallback<T extends Payload>(peerId: PeerId, parcel: Parcel<T>): Promise<void> {
     const connection: Connection = await this.getConnection(peerId);
     const outgoing: Stream = await connection.newStream(BaseProto.PROTOCOL);
-    const parcelString: string = JSON.stringify(parcel);
-    await pipe([Buffer.from(parcelString, "utf-8")], outgoing);
-    outgoing.close();
+    try {
+      const parcelString: string = JSON.stringify(parcel);
+      await pipe([Buffer.from(parcelString, "utf-8")], outgoing);
+    } finally {
+      outgoing.close();
+    }
   }
 
   private async sendParcel<T extends Payload>(peerId: PeerId, parcel: Parcel): Promise<Parcel<T>> {
@@ -112,8 +115,8 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
     this.sendParcelNoCallback(peerId, newSuccess(callbackId));
   }
 
-  protected sendRejection(peerId: PeerId, callbackId: string, msg: string): void {
-    this.sendParcelNoCallback(peerId, newRejection(callbackId, msg));
+  protected sendRejection(peerId: PeerId, callbackId: string, message: string): void {
+    this.sendParcelNoCallback(peerId, newRejection(callbackId, message));
   }
 
   private exceedsRateLimit(peerId: PeerId): boolean {

@@ -53,6 +53,11 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   private async initiateHandshake({ detail }: CustomEvent<IdentifyResult>): Promise<void> {
     console.info(`${this.peerId}: Initiating handshake with peer: ${detail.peerId.toString()}`);
 
+    if (!detail.protocols.includes(HandshakeProto.PROTOCOL)) {
+      console.warn(`${this.peerId}: Peer ${detail.peerId.toString()} does not support handshake protocol`);
+      return;
+    }
+
     const callbackId: string = crypto.randomUUID();
     const challengeBuffer: Uint8Array = crypto.getRandomValues(new Uint8Array(32));
 
