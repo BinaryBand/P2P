@@ -1,16 +1,19 @@
-type Callback<T extends Payload = Payload> = (p: Parcel<T>) => void;
+type Base58 = import("./src/tools/utils").Base58;
+type Encoded = import("./src/tools/utils").Encoded;
+type Uuid = import("./src/tools/utils").Uuid;
 
+type Callback<T extends Payload = Payload> = (p: Parcel<T>) => void;
 type Parcel<T extends Payload = Payload> = PackagedPayload<T> | Rejection;
 
 type PackagedPayload<T extends Payload> = {
-  callbackId: string;
-  from: string;
+  callbackId: Uuid;
+  from: Base58;
   payload: T;
   success: true;
 };
 
 type Rejection = {
-  callbackId: string;
+  callbackId: Uuid;
   message: string;
   success: false;
 };
@@ -30,12 +33,12 @@ interface EmptyPayload {
 }
 
 interface ChallengeRequest {
-  challenge: string;
+  challenge: Encoded;
   type: import("./src/handshake-proto").HandshakeTypes.ChallengeRequest;
 }
 
 interface ChallengeResponse {
-  proof: string;
+  proof: Encoded;
   type: import("./src/handshake-proto").HandshakeTypes.ChallengeResponse;
 }
 
@@ -46,18 +49,18 @@ interface NearestPeersRequest {
 }
 
 interface NearestPeersResponse {
-  peers: string[];
+  peers: Base58[];
   type: import("./src/swarm-proto").SwarmTypes.NearestPeersResponse;
 }
 
 interface StoreMessagesRequest {
-  destination: string;
+  destination: Base58;
   messages: MessageFragment[];
   type: import("./src/swarm-proto").SwarmTypes.StoreMessagesRequest;
 }
 
 interface RetrieveMessagesRequest {
-  destination: string;
+  destination: Base58;
   type: import("./src/swarm-proto").SwarmTypes.RetrieveMessagesRequest;
 }
 
@@ -67,11 +70,20 @@ interface RetrieveMessagesResponse {
 }
 
 interface PeerDistancePair {
-  candidate: string;
+  candidate: Base58;
   distance: number;
 }
 
+interface Envelope {
+  id: Uuid;
+  content: string;
+  recipient: Base58;
+  sender: Base58;
+  timestamp: number;
+}
+
 interface MessageFragment {
-  fragment: string;
-  signature: string;
+  id: Uuid;
+  destination: Base58;
+  fragment: Encoded;
 }

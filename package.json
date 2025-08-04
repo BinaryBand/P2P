@@ -28,6 +28,7 @@
     "@libp2p/websockets": "^9.2.18",
     "@noble/curves": "^1.9.4",
     "libp2p": "^2.9.0",
-    "lru-cache": "^11.1.0"
+    "lru-cache": "^11.1.0",
+    "shamir-secret-sharing": "^0.0.4"
   }
 }

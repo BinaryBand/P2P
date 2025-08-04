@@ -7,26 +7,23 @@ import { blake2b } from "@noble/hashes/blake2";
 import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
-import { decoder, isValidParcel, encodingFromBuffer } from "./utils.js";
-
-type Callback<T extends Payload = Payload> = (p: Parcel<T>) => void;
-type Parcel<T extends Payload = Payload> = PackagedPayload<T> | Rejection;
+import { decoder, isValidParcel, encodedFromBuffer } from "./tools/utils.js";
 
 export enum BaseTypes {
   EmptyPayload = "base:empty",
 }
 
-function newRejection(callbackId: string, message: string = ""): Rejection {
+function newRejection(callbackId: Uuid, message: string = ""): Rejection {
   return { callbackId, message, success: false };
 }
 
-function newSuccess(callbackId: string): Parcel<EmptyPayload> {
+function newSuccess(callbackId: Uuid, from: Base58): Parcel<EmptyPayload> {
   const payload: EmptyPayload = { type: BaseTypes.EmptyPayload };
-  return { callbackId, from: "", payload, success: true };
+  return { callbackId, from, payload, success: true };
 }
 
 export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
-  public static readonly PROTOCOL: string = "/secret-handshake/proto/0.3.0";
+  public static readonly PROTOCOL: string = "/secret-handshake/proto/0.4.0";
   private static readonly LIMIT: number = 32;
   private static readonly TIMEOUT: number = 30_000;
 
@@ -34,7 +31,7 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
   protected peerId: PeerId;
   private registrar: Registrar;
 
-  private callbackQueue = new LRUCache<string, Callback>({ max: BaseProto.LIMIT, ttl: BaseProto.TIMEOUT });
+  private callbackQueue = new LRUCache<Uuid, Callback>({ max: BaseProto.LIMIT, ttl: BaseProto.TIMEOUT });
   private limiterCache = new LRUCache<string, number>({ max: 2048, ttl: BaseProto.TIMEOUT });
 
   constructor(components: Components) {
@@ -72,7 +69,7 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
     return BaseProto.byteArrayToString(chunks);
   }
 
-  private async sendParcelNoCallback<T extends Payload>(peerId: PeerId, parcel: Parcel<T>): Promise<void> {
+  private async sendParcel<T extends Payload>(peerId: PeerId, parcel: Parcel<T>): Promise<void> {
     const connection: Connection = await this.getConnection(peerId);
     const outgoing: Stream = await connection.newStream(BaseProto.PROTOCOL);
     try {
@@ -83,8 +80,8 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
     }
   }
 
-  private async sendParcel<T extends Payload>(peerId: PeerId, parcel: Parcel): Promise<Parcel<T>> {
-    await this.sendParcelNoCallback(peerId, parcel);
+  private async sendParcelWithCallback<T extends Payload>(peerId: PeerId, parcel: Parcel): Promise<Parcel<T>> {
+    await this.sendParcel(peerId, parcel);
 
     return new Promise<Parcel<T>>((res): void => {
       const timeOut: NodeJS.Timeout = setTimeout((): void => {
@@ -92,6 +89,7 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
         res(newRejection(parcel.callbackId, timeoutMessage));
       }, BaseProto.TIMEOUT);
 
+      // Open a callback for the response
       this.callbackQueue.set(parcel.callbackId, (val: Parcel): void => {
         timeOut.close();
         this.callbackQueue.delete(parcel.callbackId);
@@ -100,9 +98,9 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
     });
   }
 
-  protected async sendPayload<T extends Payload>(peerId: PeerId, payload: Payload, callbackId: string): Promise<T> {
+  protected async sendPayload<T extends Payload>(peerId: PeerId, payload: Payload, callbackId: Uuid): Promise<T> {
     const parcel: Parcel = { callbackId, from: this.peerId.toString(), payload, success: true };
-    const result: Parcel<T> = await this.sendParcel<T>(peerId, parcel);
+    const result: Parcel<T> = await this.sendParcelWithCallback<T>(peerId, parcel);
 
     if (!result.success) {
       throw new Error(result.message);
@@ -111,12 +109,12 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
     return result.payload as T;
   }
 
-  protected sendConfirmation(peerId: PeerId, callbackId: string): void {
-    this.sendParcelNoCallback(peerId, newSuccess(callbackId));
+  protected sendConfirmation(peerId: PeerId, callbackId: Uuid): void {
+    this.sendParcel(peerId, newSuccess(callbackId, this.peerId.toString()));
   }
 
-  protected sendRejection(peerId: PeerId, callbackId: string, message: string): void {
-    this.sendParcelNoCallback(peerId, newRejection(callbackId, message));
+  protected sendRejection(peerId: PeerId, callbackId: Uuid, message: string): void {
+    this.sendParcel(peerId, newRejection(callbackId, message));
   }
 
   private exceedsRateLimit(peerId: PeerId): boolean {
@@ -127,7 +125,7 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
   }
 
   private countDuplicateMessages(rawMessage: string): number {
-    const fingerprint: string = encodingFromBuffer(blake2b(rawMessage));
+    const fingerprint: Encoded = encodedFromBuffer(blake2b(rawMessage));
     const messageCount: number = (this.limiterCache.get(fingerprint) ?? 0) + 1;
     this.limiterCache.set(fingerprint, messageCount);
     return messageCount;

@@ -7,7 +7,7 @@ import { ed25519 } from "@noble/curves/ed25519";
 import { LRUCache } from "lru-cache";
 
 import BaseProto from "./base-proto.js";
-import { bufferFromEncoding, encodingFromBuffer } from "./utils.js";
+import { bufferFromEncoded, encodedFromBuffer, generateUuid } from "./tools/utils.js";
 
 export interface HandshakeEvents extends Record<keyof HandshakeTypes, CustomEvent> {
   [HandshakeTypes.ChallengeRequest]: CustomEvent<PackagedPayload<ChallengeRequest>>;
@@ -60,41 +60,33 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       return;
     }
 
-    const callbackId: string = crypto.randomUUID();
+    const callbackId: Uuid = generateUuid();
     const challengeBuffer: Uint8Array = crypto.getRandomValues(new Uint8Array(32));
 
     const challengePayload: ChallengeRequest = {
-      challenge: encodingFromBuffer(challengeBuffer),
+      challenge: encodedFromBuffer(challengeBuffer),
       type: HandshakeTypes.ChallengeRequest,
     };
 
-    try {
-      const result: ChallengeResponse = await this.sendPayload(detail.peerId, challengePayload, callbackId);
-      const proofBuffer: Uint8Array = bufferFromEncoding(result.proof);
+    const result: ChallengeResponse = await this.sendPayload(detail.peerId, challengePayload, callbackId);
+    const proofBuffer: Uint8Array = bufferFromEncoded(result.proof);
 
-      const dueGuard: Uint8Array = ed25519.getPublicKey(this.initiationToken);
-      if (ed25519.verify(proofBuffer, challengeBuffer, dueGuard)) {
-        this.sendConfirmation(detail.peerId, callbackId);
-        console.info(`${this.peerId}: Handshake with peer ${detail.peerId.toString()} completed successfully.`);
-      } else {
-        this.sendRejection(detail.peerId, callbackId, "Invalid proof provided");
-        console.info(`${this.peerId}: Handshake with peer ${detail.peerId.toString()} failed due to invalid proof.`);
-      }
-    } catch {
-      console.error(`${this.peerId}: Handshake with peer ${detail.peerId.toString()} failed`);
+    const dueGuard: Uint8Array = ed25519.getPublicKey(this.initiationToken);
+    if (ed25519.verify(proofBuffer, challengeBuffer, dueGuard)) {
+      this.sendConfirmation(detail.peerId, callbackId);
+      console.info(`${this.peerId}: Handshake with peer ${detail.peerId.toString()} completed successfully.`);
+    } else {
+      this.sendRejection(detail.peerId, callbackId, "Invalid proof provided");
+      console.info(`${this.peerId}: Handshake with peer ${detail.peerId.toString()} failed due to invalid proof.`);
     }
   }
 
   private async onChallengeRequest({ detail }: CustomEvent<PackagedPayload<ChallengeRequest>>): Promise<void> {
-    const {
-      payload: { challenge },
-    } = detail;
-
-    const challengeBuffer: Uint8Array = bufferFromEncoding(challenge);
+    const challengeBuffer: Uint8Array = bufferFromEncoded(detail.payload.challenge);
     const proofBuffer: Uint8Array = ed25519.sign(challengeBuffer, this.initiationToken);
 
     const proofPayload: ChallengeResponse = {
-      proof: encodingFromBuffer(proofBuffer),
+      proof: encodedFromBuffer(proofBuffer),
       type: HandshakeTypes.ChallengeResponse,
     };
 
