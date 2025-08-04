@@ -12,6 +12,7 @@
     "Multiaddrs",
     "multiformats",
     "Muxers",
+    "shamir",
     "Startable",
     "unhandle",
     "webrtc",

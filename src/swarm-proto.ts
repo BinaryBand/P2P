@@ -3,9 +3,12 @@ import { peerIdFromString } from "@libp2p/peer-id";
 import { PeerId } from "@libp2p/interface";
 
 import { blake2b } from "@noble/hashes/blake2";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import { LRUCache } from "lru-cache";
 
 import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
+import { shamirSecretSharing, reconstructShamirSecret } from "./cryptography.js";
+import { assert, bufferFromEncoding, encodingFromBuffer } from "./utils.js";
 
 type ProtocolEvents = HandshakeEvents & Record<keyof SwarmTypes, CustomEvent>;
 
@@ -27,10 +30,13 @@ export enum SwarmTypes {
 
 export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T> {
   private static readonly MAX_RECURSION_DEPTH: number = 8;
-  private static readonly STORAGE_LIMIT: number = 256; // Max number of messages to store
+  private static readonly STORAGE_LIMIT: number = 256000; // Max number of messages to store
   private static readonly MAX_STORAGE_TIME: number = 1000 * 60 * 60 * 72; // 3 days
 
-  private storage = new LRUCache<string, string[]>({ max: SwarmProto.STORAGE_LIMIT, ttl: SwarmProto.MAX_STORAGE_TIME });
+  private storage = new LRUCache<string, MessageFragment[]>({
+    max: SwarmProto.STORAGE_LIMIT,
+    ttl: SwarmProto.MAX_STORAGE_TIME,
+  });
 
   constructor(components: Components) {
     super(components);
@@ -90,7 +96,11 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return result.peers;
   }
 
-  private async sendStoreMessageRequest(address: string, destination: string, messages: string[]): Promise<boolean> {
+  private async sendStoreMessageRequest(
+    address: string,
+    destination: string,
+    messages: MessageFragment[]
+  ): Promise<boolean> {
     if (this.peerId.equals(address)) {
       this.storage.set(destination, messages);
       return true;
@@ -105,13 +115,13 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return true;
   }
 
-  private async sendRetrieveMessageRequest(destination: string, address: string): Promise<string[]> {
-    if (this.peerId.equals(address)) {
+  private async sendRetrieveMessageRequest(node: string, destination: string): Promise<MessageFragment[]> {
+    if (this.peerId.equals(node)) {
       return this.storage.get(destination) || [];
     }
 
     const callbackId: string = crypto.randomUUID();
-    const peerId: PeerId = peerIdFromString(address);
+    const peerId: PeerId = peerIdFromString(node);
     const request: RetrieveMessagesRequest = { destination, type: SwarmTypes.RetrieveMessagesRequest };
     const result: RetrieveMessagesResponse = await this.sendPayload(peerId, request, callbackId);
     this.sendConfirmation(peerId, callbackId);
@@ -121,29 +131,53 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
   public async findNearestPeers(query: string, n: number = 5): Promise<string[]> {
     const candidates: string[] = Array.from(this.peers.keys());
-    let nearestAddresses: PeerDistancePair[] = this.orderPeersByDistance(query, candidates);
+    let nearestPeers: PeerDistancePair[] = this.orderPeersByDistance(query, candidates);
 
     try {
-      let prevMinDistance: number = nearestAddresses[0]?.distance ?? Infinity;
+      let prevMinDistance: number = nearestPeers[0]?.distance ?? Infinity;
       for (let i: number = 0; i < SwarmProto.MAX_RECURSION_DEPTH; i++) {
         const wideNet: string[][] = await Promise.all(
-          nearestAddresses.map(async ({ candidate }) => this.findNearestRemotePeers(candidate, query, n))
+          nearestPeers.map(async ({ candidate }) => this.findNearestRemotePeers(candidate, query, n))
         );
-        nearestAddresses = this.orderPeersByDistance(query, wideNet.flat());
-        const currMinDistance: number = nearestAddresses[0]?.distance ?? prevMinDistance;
-        if (currMinDistance >= prevMinDistance || nearestAddresses.length === 0) break;
+        nearestPeers = this.orderPeersByDistance(query, wideNet.flat());
+        const currMinDistance: number = nearestPeers[0]?.distance ?? prevMinDistance;
+        if (currMinDistance >= prevMinDistance || nearestPeers.length === 0) break;
         prevMinDistance = currMinDistance;
       }
     } catch (err) {
       console.warn(`Failed to find nearest remote peers. Returning last successful search`);
     }
 
-    return nearestAddresses.map(({ candidate }) => candidate).slice(0, n);
+    return nearestPeers.map(({ candidate }) => candidate).slice(0, n);
   }
 
   public async sendMessages(destination: string, messages: string[]): Promise<void> {
     const nearestPeers: string[] = await this.findNearestPeers(destination, 5);
-    await Promise.all(nearestPeers.map((pId: string) => this.sendStoreMessageRequest(pId, destination, messages)));
+    const signatures: string[] = messages.map((msg) =>
+      encodingFromBuffer(ed25519.sign(bufferFromEncoding(msg), this.privateKey))
+    );
+    const sharedMessages: string[][] = await Promise.all(messages.map((msg) => shamirSecretSharing(msg, 5, 3)));
+    assert(signatures.length === sharedMessages.length, "Signatures and messages must match in length");
+
+    const fragmentsBatch: MessageFragment[][] = [];
+    for (let i: number = 0; i < signatures.length; i++) {
+      const sharedMessage: string[] = sharedMessages[i];
+      const fragments: MessageFragment[] = [];
+      for (let j: number = 0; j < sharedMessage.length; j++) {
+        fragments.push({ fragment: sharedMessage[j], signature: signatures[i] });
+      }
+      fragmentsBatch.push(fragments);
+    }
+
+    await Promise.all(
+      nearestPeers.map((pId: string, i: number) =>
+        this.sendStoreMessageRequest(
+          pId,
+          destination,
+          fragmentsBatch.map((msg) => msg[i])
+        )
+      )
+    );
   }
 
   public async sendMessage(destination: string, message: string): Promise<void> {
@@ -155,11 +189,22 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     const remoteMessages = await Promise.all(
       closestPeers.map((pId: string) => this.sendRetrieveMessageRequest(pId, destination))
     );
-    return [...new Set(remoteMessages.flat())];
+
+    const acc: Record<string, string[]> = {};
+    for (const messages of remoteMessages) {
+      for (const { fragment, signature } of messages) {
+        if (!acc[signature]) {
+          acc[signature] = [];
+        }
+        acc[signature].push(fragment);
+      }
+    }
+
+    return Promise.all(Object.values(acc).map(reconstructShamirSecret));
   }
 
-  private storeNewMessages(destination: string, messages: string[]): void {
-    const existingMessages: string[] = this.storage.get(destination) || [];
+  private storeNewMessages(destination: string, messages: MessageFragment[]): void {
+    const existingMessages: MessageFragment[] = this.storage.get(destination) || [];
     this.storage.set(destination, [...existingMessages, ...messages]);
   }
 
@@ -182,7 +227,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   private async onRetrieveMessagesRequest({
     detail,
   }: CustomEvent<PackagedPayload<RetrieveMessagesRequest>>): Promise<void> {
-    const messages: string[] = this.storage.get(detail.payload.destination) || [];
+    const messages: MessageFragment[] = this.storage.get(detail.payload.destination) || [];
     const response: RetrieveMessagesResponse = { messages, type: SwarmTypes.RetrieveMessagesResponse };
     this.sendPayload(peerIdFromString(detail.from), response, detail.callbackId);
   }

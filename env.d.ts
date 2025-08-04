@@ -52,7 +52,7 @@ interface NearestPeersResponse {
 
 interface StoreMessagesRequest {
   destination: string;
-  messages: string[];
+  messages: MessageFragment[];
   type: import("./src/swarm-proto").SwarmTypes.StoreMessagesRequest;
 }
 
@@ -62,11 +62,16 @@ interface RetrieveMessagesRequest {
 }
 
 interface RetrieveMessagesResponse {
-  messages: string[];
+  messages: MessageFragment[];
   type: import("./src/swarm-proto").SwarmTypes.RetrieveMessagesResponse;
 }
 
 interface PeerDistancePair {
   candidate: string;
   distance: number;
+}
+
+interface MessageFragment {
+  fragment: string;
+  signature: string;
 }

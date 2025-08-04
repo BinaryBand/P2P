@@ -3,11 +3,11 @@ import { Components } from "libp2p/dist/src/components";
 import { peerIdFromString } from "@libp2p/peer-id";
 
 import { blake2b } from "@noble/hashes/blake2";
-import { ed25519 } from "@noble/curves/ed25519.js";
+import { ed25519 } from "@noble/curves/ed25519";
 import { LRUCache } from "lru-cache";
 
 import BaseProto from "./base-proto.js";
-import { bufferFromString, stringFromBuffer } from "./utils.js";
+import { bufferFromEncoding, encodingFromBuffer } from "./utils.js";
 
 export interface HandshakeEvents extends Record<keyof HandshakeTypes, CustomEvent> {
   [HandshakeTypes.ChallengeRequest]: CustomEvent<PackagedPayload<ChallengeRequest>>;
@@ -24,11 +24,13 @@ const PASSPHRASE: string = "paralysis-stadium-dioxide-absentee-repeated-panorami
 export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto<T> {
   private readonly initiationToken: Uint8Array;
 
+  protected readonly privateKey: Uint8Array;
   protected events: TypedEventTarget<Libp2pEvents>;
   protected peers: LRUCache<string, PeerId> = new LRUCache({ max: 256 });
 
   constructor(components: Components, passphrase: string = PASSPHRASE) {
     super(components);
+    this.privateKey = components.privateKey.raw.subarray(0, 32);
     this.events = components.events;
     this.initiationToken = blake2b(passphrase, { dkLen: 32 });
     components.connectionGater.denyDialPeer = this.filterPeers.bind(this);
@@ -62,13 +64,13 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     const challengeBuffer: Uint8Array = crypto.getRandomValues(new Uint8Array(32));
 
     const challengePayload: ChallengeRequest = {
-      challenge: stringFromBuffer(challengeBuffer),
+      challenge: encodingFromBuffer(challengeBuffer),
       type: HandshakeTypes.ChallengeRequest,
     };
 
     try {
       const result: ChallengeResponse = await this.sendPayload(detail.peerId, challengePayload, callbackId);
-      const proofBuffer: Uint8Array = bufferFromString(result.proof);
+      const proofBuffer: Uint8Array = bufferFromEncoding(result.proof);
 
       const dueGuard: Uint8Array = ed25519.getPublicKey(this.initiationToken);
       if (ed25519.verify(proofBuffer, challengeBuffer, dueGuard)) {
@@ -88,11 +90,11 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       payload: { challenge },
     } = detail;
 
-    const challengeBuffer: Uint8Array = bufferFromString(challenge);
+    const challengeBuffer: Uint8Array = bufferFromEncoding(challenge);
     const proofBuffer: Uint8Array = ed25519.sign(challengeBuffer, this.initiationToken);
 
     const proofPayload: ChallengeResponse = {
-      proof: stringFromBuffer(proofBuffer),
+      proof: encodingFromBuffer(proofBuffer),
       type: HandshakeTypes.ChallengeResponse,
     };
 

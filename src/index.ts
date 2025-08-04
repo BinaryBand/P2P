@@ -48,7 +48,7 @@ async function main() {
   const nodes = await Promise.all([
     getNewClient(["/ip4/0.0.0.0/udp/5000/webrtc-direct"]),
     getNewClient(["/ip4/0.0.0.0/udp/5001/webrtc-direct"]),
-    createLibp2p(getClientOptions(["/ip4/0.0.0.0/udp/5002/webrtc-direct"])),
+    getNewClient(["/ip4/0.0.0.0/udp/5002/webrtc-direct"]),
     getNewClient(["/ip4/0.0.0.0/udp/5003/webrtc-direct"]),
     getNewClient(["/ip4/0.0.0.0/udp/5004/webrtc-direct"]),
     getNewClient(["/ip4/0.0.0.0/udp/5005/webrtc-direct"]),
@@ -68,7 +68,11 @@ async function main() {
   const nearestPeers = await client.services.proto.findNearestPeers(targetAddress);
   console.log("Nearest peers found:", nearestPeers);
 
-  await client.services.proto.sendMessage(targetAddress, "Hello from the client!");
+  await client.services.proto.sendMessages(targetAddress, [
+    "Hello from the client!",
+    "This is a test message.",
+    "P2P communication is fun!",
+  ]);
   console.log(`Message sent to nearest peer`);
 
   await new Promise((resolve) => setTimeout(resolve, 2500));

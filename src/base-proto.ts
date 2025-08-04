@@ -7,7 +7,7 @@ import { blake2b } from "@noble/hashes/blake2";
 import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
-import { isValidParcel, stringFromBuffer } from "./utils.js";
+import { decoder, isValidParcel, encodingFromBuffer } from "./utils.js";
 
 type Callback<T extends Payload = Payload> = (p: Parcel<T>) => void;
 type Parcel<T extends Payload = Payload> = PackagedPayload<T> | Rejection;
@@ -59,7 +59,7 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
       combined.set(chunk, offset);
       offset += chunk.length;
     }
-    return new TextDecoder("utf-8").decode(combined);
+    return decoder.decode(combined);
   }
 
   private static async decodeStream(stream: Stream): Promise<string> {
@@ -127,7 +127,7 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
   }
 
   private countDuplicateMessages(rawMessage: string): number {
-    const fingerprint: string = stringFromBuffer(blake2b(rawMessage));
+    const fingerprint: string = encodingFromBuffer(blake2b(rawMessage));
     const messageCount: number = (this.limiterCache.get(fingerprint) ?? 0) + 1;
     this.limiterCache.set(fingerprint, messageCount);
     return messageCount;

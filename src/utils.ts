@@ -4,8 +4,11 @@ import { SwarmTypes } from "./swarm-proto.js";
 
 const PREFERRED_ENCODING: BufferEncoding = "base64";
 
-export const bufferFromString = (input: string): Uint8Array => Buffer.from(input, PREFERRED_ENCODING);
-export const stringFromBuffer = (input: Uint8Array): string => Buffer.from(input).toString(PREFERRED_ENCODING);
+export const decoder = new TextDecoder("utf-8");
+export const encoder = new TextEncoder();
+
+export const bufferFromEncoding = (input: string): Uint8Array => new Uint8Array(Buffer.from(input, PREFERRED_ENCODING));
+export const encodingFromBuffer = (input: Uint8Array): string => Buffer.from(input).toString(PREFERRED_ENCODING);
 
 export function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -37,6 +40,19 @@ function isValidEncodedValue(input: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function isValidMessageFragment(fragment: unknown): fragment is MessageFragment {
+  if (typeof fragment !== "object" || fragment === null) {
+    return false;
+  }
+
+  return (
+    "fragment" in fragment &&
+    typeof fragment.fragment === "string" &&
+    "signature" in fragment &&
+    isValidEncodedValue(fragment.signature)
+  );
 }
 
 export function isValidParcel(parcel: unknown): parcel is Parcel {
@@ -80,16 +96,12 @@ export function isValidPayload(payload: unknown): payload is Payload {
         isValidId(payload.destination) &&
         "messages" in payload &&
         Array.isArray(payload.messages) &&
-        payload.messages.every((msg: unknown) => typeof msg === "string")
+        payload.messages.every(isValidMessageFragment)
       );
     case SwarmTypes.RetrieveMessagesRequest:
       return "destination" in payload && isValidId(payload.destination);
     case SwarmTypes.RetrieveMessagesResponse:
-      return (
-        "messages" in payload &&
-        Array.isArray(payload.messages) &&
-        payload.messages.every((msg: unknown) => typeof msg === "string")
-      );
+      return "messages" in payload && Array.isArray(payload.messages) && payload.messages.every(isValidMessageFragment);
     default:
       return false;
   }
