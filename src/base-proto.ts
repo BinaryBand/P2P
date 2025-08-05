@@ -109,12 +109,20 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
     return result.payload as T;
   }
 
-  protected sendConfirmation(peerId: PeerId, callbackId: Uuid): void {
-    this.sendParcel(peerId, newSuccess(callbackId, this.peerId.toString()));
+  protected async sendConfirmation(peerId: PeerId, callbackId: Uuid): Promise<void> {
+    try {
+      await this.sendParcel(peerId, newSuccess(callbackId, this.peerId.toString()));
+    } catch {
+      console.warn(`Failed to send confirmation to peer ${peerId}`);
+    }
   }
 
-  protected sendRejection(peerId: PeerId, callbackId: Uuid, message: string): void {
-    this.sendParcel(peerId, newRejection(callbackId, message));
+  protected async sendRejection(peerId: PeerId, callbackId: Uuid, message: string): Promise<void> {
+    try {
+      await this.sendParcel(peerId, newRejection(callbackId, message));
+    } catch {
+      console.warn(`Failed to send rejection to peer ${peerId}`);
+    }
   }
 
   private exceedsRateLimit(peerId: PeerId): boolean {
@@ -172,7 +180,9 @@ export default class BaseProto<T extends {}> extends TypedEventEmitter<T> {
     }
 
     // Pass the event to the appropriate handler
-    this.dispatchEvent(new CustomEvent(detail.payload.type, { detail }));
+    if (detail.success) {
+      this.dispatchEvent(new CustomEvent(detail.payload.type, { detail }));
+    }
   }
 
   public async start(): Promise<void> {

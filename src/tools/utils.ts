@@ -101,9 +101,9 @@ export function isValidPayload(payload: unknown): payload is Payload {
         Array.isArray(payload.messages) &&
         payload.messages.every(isValidMessageFragment)
       );
-    case SwarmTypes.RetrieveMessagesRequest:
+    case SwarmTypes.GetMessagesRequest:
       return "destination" in payload && isValidPeerId(payload.destination);
-    case SwarmTypes.RetrieveMessagesResponse:
+    case SwarmTypes.GetMessagesResponse:
       return "messages" in payload && Array.isArray(payload.messages) && payload.messages.every(isValidMessageFragment);
     default:
       return false;

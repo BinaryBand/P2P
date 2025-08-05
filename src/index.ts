@@ -30,9 +30,9 @@ function getClientOptions(addresses: string[], privateKey?: PrivateKey) {
   };
 }
 
-function getNewClient(addresses: string[], privateKey?: PrivateKey) {
+function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?: string) {
   const options = getClientOptions(addresses, privateKey);
-  return createLibp2p({ ...options, services: { ...options.services, proto: SwarmProto.Swarm() } });
+  return createLibp2p({ ...options, services: { ...options.services, proto: SwarmProto.Swarm(passphrase) } });
 }
 
 async function main() {

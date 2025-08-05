@@ -3,6 +3,7 @@ type Encoded = import("./src/tools/utils").Encoded;
 type Uuid = import("./src/tools/utils").Uuid;
 
 type Callback<T extends Payload = Payload> = (p: Parcel<T>) => void;
+
 type Parcel<T extends Payload = Payload> = PackagedPayload<T> | Rejection;
 
 type PackagedPayload<T extends Payload> = {
@@ -25,8 +26,8 @@ type Payload =
   | NearestPeersRequest
   | NearestPeersResponse
   | StoreMessagesRequest
-  | RetrieveMessagesRequest
-  | RetrieveMessagesResponse;
+  | GetMessagesRequest
+  | GetMessagesResponse;
 
 interface EmptyPayload {
   type: import("./src/base-proto").BaseTypes.EmptyPayload;
@@ -59,14 +60,14 @@ interface StoreMessagesRequest {
   type: import("./src/swarm-proto").SwarmTypes.StoreMessagesRequest;
 }
 
-interface RetrieveMessagesRequest {
+interface GetMessagesRequest {
   destination: Base58;
-  type: import("./src/swarm-proto").SwarmTypes.RetrieveMessagesRequest;
+  type: import("./src/swarm-proto").SwarmTypes.GetMessagesRequest;
 }
 
-interface RetrieveMessagesResponse {
+interface GetMessagesResponse {
   messages: MessageFragment[];
-  type: import("./src/swarm-proto").SwarmTypes.RetrieveMessagesResponse;
+  type: import("./src/swarm-proto").SwarmTypes.GetMessagesResponse;
 }
 
 interface PeerDistancePair {
