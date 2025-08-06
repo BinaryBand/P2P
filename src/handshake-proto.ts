@@ -2,123 +2,140 @@ import { IdentifyResult, Libp2pEvents, PeerId, TypedEventTarget } from "@libp2p/
 import { Components } from "libp2p/dist/src/components";
 import { peerIdFromString } from "@libp2p/peer-id";
 
-import { blake2b } from "@noble/hashes/blake2";
 import { ed25519 } from "@noble/curves/ed25519";
 import { LRUCache } from "lru-cache";
 
 import BaseProto from "./base-proto.js";
-import { assert, bufferFromEncoded, encodedFromBuffer, generateUuid } from "./tools/utils.js";
+import { quickHash } from "./tools/messenger.js";
+import { assert, bufferFromEncoded, encodedFromBuffer } from "./tools/utils.js";
 
-export interface HandshakeEvents extends Record<keyof HandshakeTypes, CustomEvent> {
-  [HandshakeTypes.ChallengeRequest]: CustomEvent<PackagedPayload<ChallengeRequest>>;
-  [HandshakeTypes.ChallengeResponse]: CustomEvent<PackagedPayload<ChallengeResponse>>;
+export interface HandshakeEvents extends ProtocolEvents {
+  [HandshakeTypes.TokenRequest]: CustomEvent<Parcel<TokenRequest>>;
 }
 
 export enum HandshakeTypes {
-  ChallengeRequest = "handshake:challenge",
-  ChallengeResponse = "handshake:submit-proof",
+  TokenRequest = "handshake:token-request",
+  TokenResponse = "handshake:token-response",
 }
-
-const PASSPHRASE: string = "reconcile-stranger-clash";
 
 export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto<T> {
   private readonly initiationToken: Uint8Array;
 
-  protected readonly privateKey: Uint8Array;
-  protected events: TypedEventTarget<Libp2pEvents>;
-  protected peers: LRUCache<Base58, PeerId> = new LRUCache({ max: 256 });
+  private static readonly DEFAULT_PASSPHRASE: string = "reconcile-stranger-clash";
+  private static readonly TOKEN_TIMEOUT: number = 60 * 60 * 1000; // 1 hour
 
-  constructor(components: Components, passphrase: string = PASSPHRASE) {
+  protected events: TypedEventTarget<Libp2pEvents>;
+  protected peers: LRUCache<Base58, PeerData> = new LRUCache({ max: 256 });
+
+  constructor(components: Components, passphrase: string = HandshakeProto.DEFAULT_PASSPHRASE) {
     super(components);
-    this.privateKey = components.privateKey.raw.subarray(0, 32);
     this.events = components.events;
-    this.initiationToken = blake2b(passphrase, { dkLen: 32 });
-    components.connectionGater.denyDialPeer = this.filterPeers.bind(this);
+
+    const token: Uint8Array = quickHash(passphrase);
+    this.initiationToken = token;
   }
 
-  public static Handshake<T extends {}>(
-    passphrase?: string
-  ): (params: Components) => HandshakeProto<T & HandshakeEvents> {
+  public static Handshake<T extends HandshakeEvents>(passphrase?: string): (params: Components) => HandshakeProto<T> {
     return (params: Components) => new HandshakeProto(params, passphrase);
   }
 
-  private filterPeers(peerId: PeerId): boolean {
-    return this.peers.has(peerId.toString());
+  private addPeer(peerId: PeerId, token: Token): void {
+    this.peers.set(peerId.toString(), { peerId, token });
   }
 
-  private async dropPeer({ detail }: CustomEvent<PeerId>): Promise<void> {
-    this.peers.delete(detail.toString());
+  protected async getPeerToken(peerId: PeerId): Promise<Token | undefined> {
+    const peerData: PeerData | undefined = this.peers.get(peerId.toString());
+
+    const remoteTokenCallback = async () => {
+      const tokenRequest: TokenRequest = { type: HandshakeTypes.TokenRequest };
+      const response: Return<TokenResponse> = await this.sendRequest(peerId, tokenRequest);
+      assert(response.success, `Failed to get token from peer ${peerId}`);
+      return response.data.token;
+    };
+
+    return peerData?.token ?? remoteTokenCallback();
+  }
+
+  private createToken(peerId: Base58): Token {
+    const challengeBuffer: Uint8Array = crypto.getRandomValues(new Uint8Array(32));
+    const challenge: Encoded = encodedFromBuffer(challengeBuffer);
+    const initiationToken: Encoded = encodedFromBuffer(this.initiationToken);
+
+    const signedAt: number = Date.now();
+    const validFor: number = HandshakeProto.TOKEN_TIMEOUT;
+
+    const signHere: Uint8Array = quickHash(`${challenge} ${signedAt} ${validFor} ${initiationToken} ${peerId}`);
+    const sig: Uint8Array = ed25519.sign(signHere, this.sk);
+    const signature: Encoded = encodedFromBuffer(sig);
+    return { challenge, peerId, signature, signedAt, validFor };
+  }
+
+  private verifyToken({ challenge, peerId, signature, signedAt, validFor }: Token, publicKey: Uint8Array): boolean {
+    const initiationToken: Encoded = encodedFromBuffer(this.initiationToken);
+
+    const expiration: number = signedAt + validFor;
+    if (Date.now() > expiration) {
+      console.warn(`Token for peer ${peerId} has expired`);
+      return false;
+    }
+
+    const signHere: Uint8Array = quickHash(`${challenge} ${signedAt} ${validFor} ${initiationToken} ${peerId}`);
+    const sig: Uint8Array = bufferFromEncoded(signature);
+    return ed25519.verify(sig, signHere, publicKey);
+  }
+
+  private peerDropped({ detail }: CustomEvent<PeerId>): void {
     console.info(`Peer ${detail} disconnected`);
+    this.peers.delete(detail.toString());
   }
 
   private async initiateHandshake({ detail }: CustomEvent<IdentifyResult>): Promise<void> {
-    console.info(`${this.peerId}: Initiating handshake with peer: ${detail.peerId.toString()}`);
+    console.info(`${this.peerId}: Initiating handshake with peer: ${detail.peerId}`);
 
-    // Check if the peer supports the handshake protocol
-    if (!detail.protocols.includes(HandshakeProto.PROTOCOL)) {
-      console.warn(`${this.peerId}: Peer ${detail.peerId} does not support handshake protocol`);
-      return;
-    }
-
-    // Package the challenge request
-    const challengeBuffer: Uint8Array = crypto.getRandomValues(new Uint8Array(32));
-    const challengePayload: ChallengeRequest = {
-      challenge: encodedFromBuffer(challengeBuffer),
-      type: HandshakeTypes.ChallengeRequest,
-    };
-
-    const callbackId: Uuid = generateUuid();
     try {
-      // Send the challenge request to the peer and wait for a response
-      const result: ChallengeResponse = await this.sendPayload(detail.peerId, challengePayload, callbackId);
-      const proofBuffer: Uint8Array = bufferFromEncoded(result.proof);
-      const dueGuard: Uint8Array = ed25519.getPublicKey(this.initiationToken);
-      assert(ed25519.verify(proofBuffer, challengeBuffer, dueGuard), "Invalid proof provided");
-
-      // Wrap up by sending a confirmation message
-      this.sendConfirmation(detail.peerId, callbackId);
+      const token: Token | undefined = await this.getPeerToken(detail.peerId);
+      assert(token !== undefined, `No token found for peer ${detail.peerId}`);
+      this.addPeer(detail.peerId, token);
     } catch (err) {
-      this.sendRejection(detail.peerId, callbackId, "Handshake failed");
-      console.warn(`${this.peerId}: Handshake with peer ${detail.peerId} failed`, err);
+      console.warn(`Failed to initiate handshake with peer ${detail.peerId}:`, err);
     }
   }
 
-  private async onChallengeRequest({ detail }: CustomEvent<PackagedPayload<ChallengeRequest>>): Promise<void> {
-    const peerId: PeerId = peerIdFromString(detail.from);
-    try {
-      // Prove the challenge by signing it with the initiation token
-      const challengeBuffer: Uint8Array = bufferFromEncoded(detail.payload.challenge);
-      const proofBuffer: Uint8Array = ed25519.sign(challengeBuffer, this.initiationToken);
-      const dueGuard: Uint8Array = ed25519.getPublicKey(this.initiationToken);
-      assert(ed25519.verify(proofBuffer, challengeBuffer, dueGuard), "Failed to sign challenge");
+  private onTokenRequest({ detail }: CustomEvent<Parcel<TokenRequest>>): TokenResponse {
+    console.info(`${this.peerId}: Received token request from peer: ${detail.sender}`);
 
-      // Send the challenge response back to the peer
-      const proofPayload: ChallengeResponse = {
-        proof: encodedFromBuffer(proofBuffer),
-        type: HandshakeTypes.ChallengeResponse,
-      };
-      await this.sendPayload(peerId, proofPayload, detail.callbackId);
-
-      // Add the peer to the known peers list when the challenge is confirmed
-      this.peers.set(detail.from, peerId);
-    } catch (err) {
-      this.sendRejection(peerId, detail.callbackId, "Failed to confirm challenge");
-      console.warn(`${this.peerId}: Failed to confirm challenge with peer ${peerId}`, err);
-    }
+    const token: Token = this.createToken(detail.sender);
+    assert(this.verifyToken(token, this.pk), "Invalid token signature");
+    const publicKey: Encoded = encodedFromBuffer(this.pk);
+    return { publicKey, token, type: HandshakeTypes.TokenResponse };
   }
 
   public async start(): Promise<void> {
     await super.start();
     this.events.addEventListener("peer:identify", this.initiateHandshake.bind(this));
-    this.events.addEventListener("peer:disconnect", this.dropPeer.bind(this));
-    this.addEventListener(HandshakeTypes.ChallengeRequest, this.onChallengeRequest.bind(this));
+    this.events.addEventListener("peer:disconnect", this.peerDropped.bind(this));
+    super.addEventListener(HandshakeTypes.TokenRequest, this.onTokenRequest.bind(this));
   }
 
   public async stop(): Promise<void> {
     await super.stop();
     this.events.removeEventListener("peer:identify", this.initiateHandshake.bind(this));
-    this.events.removeEventListener("peer:disconnect", this.dropPeer.bind(this));
-    this.removeEventListener(HandshakeTypes.ChallengeRequest, this.onChallengeRequest.bind(this));
+    this.events.removeEventListener("peer:disconnect", this.peerDropped.bind(this));
+    super.removeEventListener(HandshakeTypes.TokenRequest, this.onTokenRequest.bind(this));
     this.peers.clear();
+  }
+
+  public addEventListener<K extends keyof T, U extends ResponseData>(
+    type: K,
+    args: (evt: T[K]) => U | Promise<U>,
+    opts?: AddEventListenerOptions
+  ): void {
+    const authWrapper = async (evt: T[K]): Promise<U> => {
+      console.log("Token:", evt.detail.token);
+      const out: U = await args(evt);
+      return out;
+    };
+
+    super.addEventListener(type, authWrapper, opts);
   }
 }

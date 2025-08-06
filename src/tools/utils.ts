@@ -1,6 +1,6 @@
 import { BaseTypes } from "../base-proto.js";
 import { HandshakeTypes } from "../handshake-proto.js";
-import { SwarmTypes } from "../swarm-proto.js";
+import { MessageTypes } from "../message.js";
 
 export type Base58 = string;
 export type Encoded = `${Text.Encoded},${string}`;
@@ -39,13 +39,13 @@ export function encodedFromBuffer(input: Uint8Array): Encoded {
   return `${Text.Encoded},${Buffer.from(input).toString(Text.Encoded)}`;
 }
 
-export function generateUuid(): Uuid {
-  return crypto.randomUUID();
-}
-
 const PEER_ID_REGEX: RegExp = new RegExp(`^[1-9A-HJ-NP-Za-km-z]+$`);
 export function isValidPeerId(peerId: unknown): peerId is Base58 {
   return typeof peerId === "string" && PEER_ID_REGEX.test(peerId);
+}
+
+export function generateUuid(): Uuid {
+  return crypto.randomUUID();
 }
 
 const UUID_REGEX: RegExp = new RegExp(`[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`);
@@ -53,58 +53,71 @@ export function isValidUuid(uuid: unknown): uuid is Uuid {
   return typeof uuid === "string" && UUID_REGEX.test(uuid);
 }
 
-function isValidMessageFragment(fragment: unknown): fragment is MessageFragment {
-  if (typeof fragment !== "object" || fragment === null) return false;
-  return "id" in fragment && isValidUuid(fragment.id) && "fragment" in fragment && isValidEncoded(fragment.fragment);
+function isValidToken(token: unknown): token is Token {
+  return (
+    typeof token === "object" &&
+    token !== null &&
+    "challenge" in token &&
+    isValidEncoded(token.challenge) &&
+    "peerId" in token &&
+    isValidPeerId(token.peerId) &&
+    "signature" in token &&
+    isValidEncoded(token.signature) &&
+    "signedAt" in token &&
+    typeof token.signedAt === "number" &&
+    "validFor" in token &&
+    typeof token.validFor === "number"
+  );
 }
 
-export function isValidParcel(parcel: unknown): parcel is Parcel {
+export function isValidParcel(parcel: unknown): parcel is Parcel<RequestData | Return> {
   if (
-    !parcel ||
     typeof parcel !== "object" ||
+    parcel === null ||
     !("callbackId" in parcel) ||
-    !isValidUuid(parcel.callbackId) ||
-    !("success" in parcel) ||
-    typeof parcel.success !== "boolean"
+    !("sender" in parcel) ||
+    !("payload" in parcel)
   ) {
     return false;
   }
 
-  if (!parcel.success) {
-    return "message" in parcel && typeof parcel.message === "string";
-  }
-
-  return "from" in parcel && isValidPeerId(parcel.from) && "payload" in parcel && isValidPayload(parcel.payload);
+  return (
+    isValidUuid(parcel.callbackId) &&
+    isValidPeerId(parcel.sender) &&
+    (isValidRequest(parcel.payload) || isValidReturn(parcel.payload))
+  );
 }
 
-export function isValidPayload(payload: unknown): payload is Payload {
-  if (!payload || typeof payload !== "object" || !("type" in payload)) {
+export function isValidRequest(payload: unknown): payload is RequestData {
+  if (typeof payload !== "object" || payload === null || !("type" in payload)) {
     return false;
   }
 
-  switch ((payload as Payload).type) {
-    case BaseTypes.EmptyPayload:
+  switch (payload.type) {
+    case HandshakeTypes.TokenRequest:
       return true;
-    case HandshakeTypes.ChallengeRequest:
-      return "challenge" in payload && isValidEncoded(payload.challenge);
-    case HandshakeTypes.ChallengeResponse:
-      return "proof" in payload && isValidEncoded(payload.proof);
-    case SwarmTypes.NearestPeersRequest:
-      return "n" in payload && typeof payload.n === "number" && "query" in payload && typeof payload.query === "string";
-    case SwarmTypes.NearestPeersResponse:
-      return "peers" in payload && Array.isArray(payload.peers) && payload.peers.every(isValidPeerId);
-    case SwarmTypes.StoreMessagesRequest:
+    case MessageTypes.NearestPeersRequest:
       return (
-        "destination" in payload &&
-        isValidPeerId(payload.destination) &&
-        "messages" in payload &&
-        Array.isArray(payload.messages) &&
-        payload.messages.every(isValidMessageFragment)
+        "n" in payload &&
+        typeof payload.n === "number" &&
+        "query" in payload &&
+        typeof payload.query === "string" &&
+        "token" in payload &&
+        isValidToken(payload.token)
       );
-    case SwarmTypes.GetMessagesRequest:
-      return "destination" in payload && isValidPeerId(payload.destination);
-    case SwarmTypes.GetMessagesResponse:
-      return "messages" in payload && Array.isArray(payload.messages) && payload.messages.every(isValidMessageFragment);
+    default:
+      return false;
+  }
+}
+
+export function isValidReturn(returnValue: unknown): returnValue is Return {
+  if (typeof returnValue !== "object" || returnValue === null || !("type" in returnValue)) {
+    return false;
+  }
+
+  switch (returnValue.type) {
+    case BaseTypes.Return:
+      return "success" in returnValue && typeof returnValue.success === "boolean";
     default:
       return false;
   }

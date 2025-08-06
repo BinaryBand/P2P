@@ -12,7 +12,7 @@ import { peerIdFromPrivateKey } from "@libp2p/peer-id";
 import { PeerId, PrivateKey } from "@libp2p/interface";
 import { keys } from "@libp2p/crypto";
 
-import SwarmProto from "./swarm-proto.js";
+import SwarmProto from "./message.js";
 
 const stockOptions = {
   connectionEncrypters: [noise()],
@@ -32,7 +32,7 @@ function getClientOptions(addresses: string[], privateKey?: PrivateKey) {
 
 function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?: string) {
   const options = getClientOptions(addresses, privateKey);
-  return createLibp2p({ ...options, services: { ...options.services, proto: SwarmProto.Swarm(passphrase) } });
+  return createLibp2p({ ...options, services: { ...options.services, proto: SwarmProto.Messages(passphrase) } });
 }
 
 async function main() {
@@ -48,40 +48,37 @@ async function main() {
   const nodes = await Promise.all([
     getNewClient(["/ip4/0.0.0.0/udp/5000/webrtc-direct"]),
     getNewClient(["/ip4/0.0.0.0/udp/5001/webrtc-direct"]),
-    createLibp2p(getClientOptions(["/ip4/0.0.0.0/udp/5002/webrtc-direct"])),
-    getNewClient(["/ip4/0.0.0.0/udp/5003/webrtc-direct"]),
-    getNewClient(["/ip4/0.0.0.0/udp/5004/webrtc-direct"]),
-    getNewClient(["/ip4/0.0.0.0/udp/5005/webrtc-direct"]),
+    getNewClient(["/ip4/0.0.0.0/udp/5002/webrtc-direct"]),
   ]);
 
   await client.start();
   await Promise.all(nodes.map((node) => node.start()));
+  await new Promise((resolve) => setTimeout(resolve, 2500));
 
-  while (client.getPeers().length < 3) {
+  while (client.getPeers().length < 1) {
     console.log(client.getPeers().length, "peers connected");
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   console.log("Bootstrapped with peers:", client.getPeers().length);
-
   await new Promise((resolve) => setTimeout(resolve, 2500));
-  const targetAddress: string = nodes[4].peerId.toString();
+
+  const targetAddress: string = nodes[2].peerId.toString();
   const nearestPeers = await client.services.proto.findNearestPeers(targetAddress);
   console.log("Nearest peers found:", nearestPeers);
 
-  await client.services.proto.sendMessages(targetAddress, [
-    "Hello from the client!",
-    "This is a test message.",
-    "P2P communication is fun!",
-  ]);
-  console.log(`Message sent to nearest peer`);
+  // await client.services.proto.sendMessages(targetAddress, [
+  //   "Hello from the client!",
+  //   "This is a test message.",
+  //   "P2P communication is fun!",
+  // ]);
+  // console.log(`Message sent to nearest peer`);
+
+  // await new Promise((resolve) => setTimeout(resolve, 2500));
+
+  // const messages = await nodes[4].services.proto.getMessages(targetAddress);
+  // console.log(`Messages retrieved from ${targetAddress}:`, messages);
 
   await new Promise((resolve) => setTimeout(resolve, 2500));
-
-  const messages = await nodes[4].services.proto.getMessages(targetAddress);
-  console.log(`Messages retrieved from ${targetAddress}:`, messages);
-
-  await new Promise((resolve) => setTimeout(resolve, 2500));
-
   console.log("Stopping application...");
   await client.stop();
   await Promise.all(nodes.map((node) => node.stop()));
