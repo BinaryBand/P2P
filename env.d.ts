@@ -58,7 +58,7 @@ interface _TokenRequired {
 
 interface NearestPeersRequest extends _TokenRequired {
   n: number;
-  query: string;
+  query: Base58 | Encoded;
   type: import("./src/message").MessageTypes.NearestPeersRequest;
 }
 
@@ -68,7 +68,6 @@ interface Parcel<T extends RequestData | Return> {
   callbackId: Uuid;
   payload: T;
   sender: Base58;
-  token?: Token;
 }
 
 type Callback<T extends ResponseData = ResponseData> = (res: Return<T>) => void;

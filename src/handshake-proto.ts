@@ -1,6 +1,5 @@
 import { IdentifyResult, Libp2pEvents, PeerId, TypedEventTarget } from "@libp2p/interface";
 import { Components } from "libp2p/dist/src/components";
-import { peerIdFromString } from "@libp2p/peer-id";
 
 import { ed25519 } from "@noble/curves/ed25519";
 import { LRUCache } from "lru-cache";
@@ -104,7 +103,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   private onTokenRequest({ detail }: CustomEvent<Parcel<TokenRequest>>): TokenResponse {
     console.info(`${this.peerId}: Received token request from peer: ${detail.sender}`);
 
-    const token: Token = this.createToken(detail.sender);
+    const token: Token = this.createToken(this.peerId.toString());
     assert(this.verifyToken(token, this.pk), "Invalid token signature");
     const publicKey: Encoded = encodedFromBuffer(this.pk);
     return { publicKey, token, type: HandshakeTypes.TokenResponse };
@@ -131,9 +130,9 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     opts?: AddEventListenerOptions
   ): void {
     const authWrapper = async (evt: T[K]): Promise<U> => {
-      console.log("Token:", evt.detail.token);
-      const out: U = await args(evt);
-      return out;
+      assert("token" in evt.detail.payload, "Token is required for this event");
+      assert(this.verifyToken(evt.detail.payload.token, this.pk), "Invalid token format");
+      return args(evt);
     };
 
     super.addEventListener(type, authWrapper, opts);

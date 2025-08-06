@@ -22,25 +22,23 @@ export default class MessageProto<T extends MessageEvents> extends HandshakeProt
     super(components, passphrase);
   }
 
-  public static Messages<T extends MessageEvents>(
-    passphrase?: string
-  ): (params: Components) => MessageProto<T & MessageEvents> {
+  public static Messages<T extends MessageEvents>(passphrase?: string): (params: Components) => MessageProto<T> {
     return (params: Components) => new MessageProto(params, passphrase);
   }
 
-  private findNearestLocalPairs(query: string, n: number): PeerDistancePair[] {
+  private findNearestLocalPairs(query: Base58 | Encoded, n: number): PeerDistancePair[] {
     const candidates: string[] = Array.from(this.peers.keys());
     const distances: PeerDistancePair[] = orderPeers(query, candidates);
     return distances.slice(0, n);
   }
 
-  private findNearestLocals(query: string, n: number): Base58[] {
+  private findNearestLocals(query: Base58 | Encoded, n: number): Base58[] {
     const candidates: string[] = Array.from(this.peers.keys());
     const distances: PeerDistancePair[] = orderPeers(query, candidates);
     return distances.slice(0, n).map((pair) => pair.peer);
   }
 
-  protected async getNearestRemote(address: Base58, query: string, n: number): Promise<NearestPeersResponse> {
+  protected async getNearestRemote(address: Base58, query: Base58 | Encoded, n: number): Promise<NearestPeersResponse> {
     const peerId: PeerId = peerIdFromString(address);
 
     const token: Token | undefined = await this.getPeerToken(peerId);
@@ -53,7 +51,7 @@ export default class MessageProto<T extends MessageEvents> extends HandshakeProt
     return response.data;
   }
 
-  public async findNearestPeers(query: string, n: number = 3): Promise<Base58[]> {
+  public async findNearestPeers(query: Base58 | Encoded, n: number = 3): Promise<Base58[]> {
     let peers: PeerDistancePair[] = this.findNearestLocalPairs(query, n);
 
     try {
@@ -69,7 +67,7 @@ export default class MessageProto<T extends MessageEvents> extends HandshakeProt
         prevMinDistance = currMinDistance;
       }
     } catch (err) {
-      console.warn("Failed to find nearest remote peers. Returning last successful search.");
+      console.warn("Failed to find nearest remote peers. Returning last successful search.", err);
     }
 
     return peers.map((pair: PeerDistancePair) => pair.peer).slice(0, n);
