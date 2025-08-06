@@ -1,39 +1,32 @@
 import { Connection, IncomingStreamData, PeerId, Stream, TypedEventEmitter } from "@libp2p/interface";
 import { ConnectionManager, Registrar } from "@libp2p/interface-internal";
 import { Components } from "libp2p/dist/src/components";
-import { peerIdFromString } from "@libp2p/peer-id";
 
+import { ed25519 } from "@noble/curves/ed25519.js";
 import { Uint8ArrayList } from "uint8arraylist";
-import { blake2b } from "@noble/hashes/blake2";
 import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
 import {
-  decoder,
-  isValidParcel,
-  encodedFromBuffer,
-  generateUuid,
-  isValidReturn,
-  isValidRequest,
-  assert,
-} from "./tools/utils.js";
-import { ed25519 } from "@noble/curves/ed25519.js";
+  decode,
+  bytesToBase64,
+  isParcel,
+  isReturn,
+  isRequest,
+  encodePeerId,
+  decodeAddress,
+  newUuid,
+} from "./tools/typing.js";
+import { blake2b } from "./tools/cryptography.js";
+import { assert } from "./tools/utils.js";
 
 export enum BaseTypes {
   Return = "base:return",
   EmptyResponse = "base:empty-response",
 }
 
-function newAcceptance<T extends ResponseData = EmptyResponse>(data: T): Acceptance<T> {
-  return { data, success: true, type: BaseTypes.Return };
-}
-
-function newRejection(message: string): Rejection {
-  return { type: BaseTypes.Return, success: false, message };
-}
-
 export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitter<T> {
-  public static readonly PROTOCOL: string = "/secret-handshake/proto/0.5.0";
+  public static readonly PROTOCOL: string = "/secret-handshake/proto/0.5.2";
   private static readonly CALLBACK_LIMIT: number = 32;
   private static readonly TIMEOUT: number = 30_000;
 
@@ -61,8 +54,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     const connections: Connection[] = this.connectionManager
       .getConnections(peerId)
       .filter(({ direction }) => direction === "outbound");
-    const connection: Connection = connections[0] ?? (await this.connectionManager.openConnection(peerId));
-    return connection;
+    return connections[0] ?? (await this.connectionManager.openConnection(peerId));
   }
 
   private static byteArrayToString(byteArray: Uint8Array[]): string {
@@ -72,7 +64,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
       combined.set(chunk, offset);
       offset += chunk.length;
     }
-    return decoder.decode(combined);
+    return decode(combined);
   }
 
   private static async decodeStream(stream: Stream): Promise<string> {
@@ -91,6 +83,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     try {
       const parcelString: string = JSON.stringify(parcel);
       await pipe([Buffer.from(parcelString, "utf-8")], outgoing);
+    } catch {
     } finally {
       outgoing.close();
     }
@@ -102,9 +95,11 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   ): Promise<Return<U>> {
     await this.sendParcelNoCallback(peerId, parcel);
 
+    // Wait for the response
     return new Promise<Return<U>>((res: Callback<U>): void => {
       const timeOut: NodeJS.Timeout = setTimeout((): void => {
-        res(newRejection(`Timeout while waiting for response from: ${peerId}`) as Return<U>);
+        const message: string = `Timeout while waiting for response from: ${peerId}`;
+        res({ success: false, message });
       }, BaseProto.TIMEOUT);
 
       // Open a callback for the response
@@ -130,28 +125,25 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     peerId: PeerId,
     payload: T
   ): Promise<Return<U>> {
-    const sender: Base58 = this.peerId.toString();
+    const sender: Address = encodePeerId(this.peerId);
 
-    const callbackId: Uuid = generateUuid();
+    const callbackId: Uuid = newUuid();
     const parcel: Parcel<T> = { callbackId, payload, sender };
     const result: Return<U> = await this.sendParcel<T, U>(peerId, parcel);
-
-    if (!result.success) {
-      throw new Error(result.message);
-    }
+    assert(result.success, (result as Rejection).message);
 
     return result;
   }
 
   private exceedsRateLimit(peerId: PeerId): boolean {
-    const peerAddress: string = peerId.toString();
+    const peerAddress: Address = encodePeerId(peerId);
     const rateCount: number = (this.limiterCache.get(peerAddress) ?? 0) + 1;
     this.limiterCache.set(peerAddress, rateCount);
     return BaseProto.CALLBACK_LIMIT < rateCount;
   }
 
   private countDuplicateMessages(rawMessage: string): number {
-    const fingerprint: Encoded = encodedFromBuffer(blake2b(rawMessage));
+    const fingerprint: Base64 = bytesToBase64(blake2b(rawMessage));
     const messageCount: number = (this.limiterCache.get(fingerprint) ?? 0) + 1;
     this.limiterCache.set(fingerprint, messageCount);
     return messageCount;
@@ -160,9 +152,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   private static parseParcel<T extends RequestData>(rawMessage: string): Parcel<T> | undefined {
     try {
       const parcel: Parcel<T> = JSON.parse(rawMessage);
-      if (isValidParcel(parcel)) {
-        return parcel;
-      }
+      if (isParcel(parcel)) return parcel;
     } catch {}
   }
 
@@ -184,36 +174,29 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     stream.close();
 
     try {
-      // Check if the message is a valid payload
-      if (this.exceedsRateLimit(connection.remotePeer)) {
-        console.warn("Rate limit exceeded, dropping message:", rawMessage);
-        return;
-      }
+      // Check for rate limit violations
+      const errorMessage: string = `Rate limit exceeded for peer: ${connection.remotePeer}`;
+      assert(!this.exceedsRateLimit(connection.remotePeer), errorMessage);
 
       // Check for excessive duplicate messages
       const messageCount: number = this.countDuplicateMessages(rawMessage);
-      if (1 < messageCount) {
-        if (8 < messageCount) {
-          console.warn(`Excessive duplicates detected: ${rawMessage}`);
-        }
-        return;
-      }
+      assert(messageCount < 8, `Excessive duplicates detected: ${rawMessage}`);
 
       const detail: Parcel<RequestData | Return> | undefined = BaseProto.parseParcel(rawMessage);
       assert(detail !== undefined, `Invalid parcel received: ${rawMessage}`);
-      assert(connection.remotePeer.equals(detail.sender), `${connection.remotePeer} !== ${detail.sender}`);
+      assert(encodePeerId(connection.remotePeer) === detail.sender, `${connection.remotePeer} !== ${detail.sender}`);
 
       // If this is a callback response, invoke the callback instead of treating it like a new event
-      if (this.callbackQueue.has(detail.callbackId) && isValidReturn(detail.payload)) {
+      if (this.callbackQueue.has(detail.callbackId) && isReturn(detail.payload)) {
         this.callbackQueue.get(detail.callbackId)!(detail.payload);
       }
 
       // If this is a new payload, pass it to the event handler
-      else if (isValidRequest(detail.payload)) {
+      else if (isRequest(detail.payload)) {
         this.dispatchEvent(new CustomEvent(detail.payload.type, { detail }));
       }
-    } catch {
-      console.error("Error processing incoming stream:", rawMessage);
+    } catch (err) {
+      console.error("Error processing incoming stream:", { rawMessage }, err);
     }
   }
 
@@ -233,29 +216,37 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
    * This method overrides the base `addEventListener` to provide additional logic for
    * handling peer-to-peer event responses, including error handling and response packaging.
    */
-  public addEventListener<K extends keyof T, U extends ResponseData>(
+  public addEventListener<K extends keyof T>(
     type: K,
-    args: (evt: T[K]) => U | Promise<U>,
+    args: (evt: T[K]) => void | ResponseData | Promise<void | ResponseData>,
     opts?: AddEventListenerOptions
   ): void {
     const eventWrapper = async (event: T[K]): Promise<void> => {
-      const senderPeerId = peerIdFromString(event.detail.sender);
-      const sender: Base58 = this.peerId.toString();
+      const peerId: PeerId = decodeAddress(event.detail.sender);
+      const sender: Address = encodePeerId(this.peerId);
 
-      let returnParcel: Parcel<Return<U>>;
+      let returnParcel: Parcel<Return>;
       try {
-        const res: U = await args(event);
-        const payload: Return<U> = newAcceptance(res);
-        returnParcel = { callbackId: event.detail.callbackId, payload, sender };
+        const res: ResponseData | void = await args(event);
+
+        let payload: Return<ResponseData>;
+        if (res !== undefined) {
+          payload = { data: res, success: true };
+          returnParcel = { callbackId: event.detail.callbackId, payload, sender };
+        } else {
+          payload = { data: { type: BaseTypes.EmptyResponse }, success: true };
+          returnParcel = { callbackId: event.detail.callbackId, payload, sender };
+        }
       } catch (err: unknown) {
         const errorMessage: string = err instanceof Error ? err.message : String(err);
-        returnParcel = { callbackId: event.detail.callbackId, payload: newRejection(errorMessage), sender };
+        const payload: Rejection = { success: false, message: errorMessage };
+        returnParcel = { callbackId: event.detail.callbackId, payload, sender };
       }
 
       try {
-        this.sendParcelNoCallback(senderPeerId, returnParcel);
-      } catch (error) {
-        console.error("Error sending parcel:", error);
+        this.sendParcelNoCallback(peerId, returnParcel);
+      } catch (err) {
+        console.error("Error sending parcel:", err);
       }
     };
 

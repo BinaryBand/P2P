@@ -1,22 +1,18 @@
-type Base58 = import("./src/tools/utils").Base58;
-type Encoded = import("./src/tools/utils").Encoded;
-type Uuid = import("./src/tools/utils").Uuid;
+type Address = import("./src/tools/typing").Address;
+type Base64 = import("./src/tools/typing").Base64;
+type Uuid = import("./src/tools/typing").Uuid;
 
 interface PeerData {
   peerId: import("@libp2p/interface").PeerId;
   token?: Token;
 }
 
-interface _BaseReturn {
-  type: import("./src/base-proto").BaseTypes;
-}
-
-interface Acceptance<T extends ResponseData> extends _BaseReturn {
+interface Acceptance<T extends ResponseData> {
   data: T;
   success: true;
 }
 
-interface Rejection extends _BaseReturn {
+interface Rejection {
   message: string;
   success: false;
 }
@@ -24,9 +20,9 @@ interface Rejection extends _BaseReturn {
 type Return<T extends ResponseData = ResponseData> = Acceptance<T> | Rejection;
 
 interface Token {
-  challenge: Encoded;
-  peerId: Base58;
-  signature: Encoded;
+  challenge: Base64;
+  peerId: Address;
+  signature: Base64;
   signedAt: number;
   validFor: number;
 }
@@ -36,44 +32,58 @@ interface EmptyResponse {
 }
 
 interface TokenResponse {
-  publicKey: Encoded;
+  publicKey: Base64;
   token: Token;
   type: import("./src/handshake-proto").HandshakeTypes.TokenResponse;
 }
 
 interface NearestPeersResponse {
-  peers: Base58[];
-  type: import("./src/message").MessageTypes.NearestPeersResponse;
+  peers: Address[];
+  type: import("./src/swarm-proto").SwarmTypes.NearestPeersResponse;
 }
 
-type ResponseData = TokenResponse | EmptyResponse | NearestPeersResponse;
+interface FetchResponse {
+  fragment: string | undefined;
+  type: import("./src/swarm-proto").SwarmTypes.FetchResponse;
+}
+
+type ResponseData = EmptyResponse | TokenResponse | NearestPeersResponse | FetchResponse;
 
 interface TokenRequest {
   type: import("./src/handshake-proto").HandshakeTypes.TokenRequest;
 }
 
-interface _TokenRequired {
-  token: Token;
-}
-
-interface NearestPeersRequest extends _TokenRequired {
+interface NearestPeersRequest {
   n: number;
-  query: Base58 | Encoded;
-  type: import("./src/message").MessageTypes.NearestPeersRequest;
+  hash: Base64;
+  token: Token;
+  type: import("./src/swarm-proto").SwarmTypes.NearestPeersRequest;
 }
 
-type RequestData = TokenRequest | NearestPeersRequest;
+interface StoreRequest {
+  data: string;
+  token: Token;
+  type: import("./src/swarm-proto").SwarmTypes.StoreRequest;
+}
+
+interface FetchRequest {
+  hash: Base64;
+  token: Token;
+  type: import("./src/swarm-proto").SwarmTypes.FetchRequest;
+}
+
+type RequestData = TokenRequest | NearestPeersRequest | StoreRequest | FetchRequest;
 
 interface Parcel<T extends RequestData | Return> {
   callbackId: Uuid;
   payload: T;
-  sender: Base58;
+  sender: Address;
 }
 
 type Callback<T extends ResponseData = ResponseData> = (res: Return<T>) => void;
 
 interface PeerDistancePair {
-  peer: Base58;
+  peer: Address;
   distance: number;
 }
 

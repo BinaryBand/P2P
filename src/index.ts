@@ -12,7 +12,9 @@ import { peerIdFromPrivateKey } from "@libp2p/peer-id";
 import { PeerId, PrivateKey } from "@libp2p/interface";
 import { keys } from "@libp2p/crypto";
 
-import SwarmProto from "./message.js";
+import { encodePeerId } from "./tools/typing.js";
+// import { assert } from "./tools/utils.js";
+import SwarmProto from "./swarm-proto.js";
 
 const stockOptions = {
   connectionEncrypters: [noise()],
@@ -32,7 +34,7 @@ function getClientOptions(addresses: string[], privateKey?: PrivateKey) {
 
 function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?: string) {
   const options = getClientOptions(addresses, privateKey);
-  return createLibp2p({ ...options, services: { ...options.services, proto: SwarmProto.Messages(passphrase) } });
+  return createLibp2p({ ...options, services: { ...options.services, proto: SwarmProto.Swarm(passphrase) } });
 }
 
 async function main() {
@@ -55,29 +57,50 @@ async function main() {
   await Promise.all(nodes.map((node) => node.start()));
   await new Promise((resolve) => setTimeout(resolve, 2500));
 
-  while (client.getPeers().length < 1) {
+  while (client.getPeers().length <= 2) {
     console.log(client.getPeers().length, "peers connected");
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   console.log("Bootstrapped with peers:", client.getPeers().length);
   await new Promise((resolve) => setTimeout(resolve, 2500));
 
-  const targetAddress: string = nodes[2].peerId.toString();
-  const nearestPeers = await client.services.proto.findNearestPeers(targetAddress);
+  /*****************
+   * Test Peer Discovery
+   *****************/
+  const targetAddress: Address = encodePeerId(nodes[2].peerId);
+  const nearestPeers: Address[] = await client.services.proto.getNearestPeers(targetAddress);
   console.log("Nearest peers found:", nearestPeers);
 
-  // await client.services.proto.sendMessages(targetAddress, [
-  //   "Hello from the client!",
-  //   "This is a test message.",
-  //   "P2P communication is fun!",
-  // ]);
-  // console.log(`Message sent to nearest peer`);
+  /*****************
+   * Test Local Data Storage
+   *****************/
+  const mockData: string = "This is test data to be stored locally.";
+  const mockHash: Base64 = client.services.proto.saveDataLocally(mockData);
+  console.log("Data stored with hash:", mockHash);
 
-  // await new Promise((resolve) => setTimeout(resolve, 2500));
+  let clientData: string | undefined = client.services.proto.getLocalData(mockHash);
+  let nodeData: (string | undefined)[] = nodes.map((node) => node.services.proto.getLocalData(mockHash));
+  console.log("Data retrieved from client:", { clientData, ...nodeData });
 
-  // const messages = await nodes[4].services.proto.getMessages(targetAddress);
-  // console.log(`Messages retrieved from ${targetAddress}:`, messages);
+  /*****************
+   * Test Remote Data Storage
+   *****************/
+  const remoteData: string = "This is remote data stored by another peer.";
+  const remoteHash: Base64 = await client.services.proto.storeData(remoteData);
+  console.log("Data stored with hash:", remoteHash);
 
+  clientData = client.services.proto.getLocalData(remoteHash);
+  nodeData = nodes.map((node) => node.services.proto.getLocalData(remoteHash));
+  console.log("Data retrieved from client:", { clientData, ...nodeData });
+
+  const networkData: string | undefined = await client.services.proto.fetchData(remoteHash);
+  console.log("Data fetched from network:", networkData);
+
+  // const retrievedData: string | undefined = client.services.proto.getData(hash);
+  // console.log("Retrieved data:", retrievedData);
+  // assert(retrievedData === mockData, "Retrieved data does not match stored data");
+
+  /*************/
   await new Promise((resolve) => setTimeout(resolve, 2500));
   console.log("Stopping application...");
   await client.stop();
