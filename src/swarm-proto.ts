@@ -1,18 +1,18 @@
 import { Components } from "libp2p/dist/src/components";
 import { PeerId } from "@libp2p/interface";
+import { LRUCache } from "lru-cache";
 
 import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
 import { bytesToBase64, decodeAddress, encodePeerId } from "./tools/typing.js";
 import { blake2b } from "./tools/cryptography.js";
 import { orderPeers } from "./tools/routing.js";
 import { assert } from "./tools/utils.js";
-import { LRUCache } from "lru-cache";
 
-export type SwarmEvents = (ProtocolEvents & HandshakeEvents) & {
+export interface SwarmEvents extends HandshakeEvents {
   [SwarmTypes.NearestPeersRequest]: CustomEvent<Parcel<NearestPeersRequest>>;
   [SwarmTypes.StoreRequest]: CustomEvent<Parcel<StoreRequest>>;
   [SwarmTypes.FetchRequest]: CustomEvent<Parcel<FetchRequest>>;
-};
+}
 
 export enum SwarmTypes {
   NearestPeersRequest = "swarm:nearest-peers-request",

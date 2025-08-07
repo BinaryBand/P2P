@@ -8,7 +8,7 @@ import { assert } from "./utils.js";
 
 export type Address = `${Formats.Base58},${string}`;
 export type Base64 = `${Formats.Base64},${string}`;
-export type Uuid = `${Formats.Uuid},${string}-${string}-${string}-${string}-${string}`;
+// export type Uuid = `${Formats.Uuid},${string}-${string}-${string}-${string}-${string}`;
 
 export enum Formats {
   Base58 = "base58",
@@ -50,15 +50,10 @@ export function decodeAddress(address: Address): PeerId {
   return peerIdFromString(match[1]);
 }
 
-export function newUuid(): Uuid {
-  return `${Formats.Uuid},${crypto.randomUUID()}`;
-}
+const UUID_REGEX: RegExp = new RegExp("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
 
 function isUuid(uuid: unknown): uuid is Uuid {
-  const uuidRegex: RegExp = new RegExp(
-    `${Formats.Uuid},[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`
-  );
-  return typeof uuid === "string" && uuidRegex.test(uuid);
+  return typeof uuid === "string" && UUID_REGEX.test(uuid);
 }
 
 export function isParcel(parcel: unknown): parcel is Parcel<ReqData | Return> {
@@ -150,19 +145,16 @@ function isResponse(response: unknown): response is ResData {
       return true;
     }
     case SwarmTypes.NearestPeersResponse:
-      {
-        if ("peers" in response && Array.isArray(response.peers) && response.peers.every(isAddress)) {
-          control = { peers: response.peers, type: response.type };
-          return true;
-        }
+      if ("peers" in response && Array.isArray(response.peers) && response.peers.every(isAddress)) {
+        control = { peers: response.peers, type: response.type };
+        return true;
       }
       break;
-    case SwarmTypes.FetchResponse: {
+    case SwarmTypes.FetchResponse:
       if ("fragment" in response && (typeof response.fragment === "string" || response.fragment === null)) {
         control = { fragment: response.fragment, type: response.type };
         return true;
       }
-    }
   }
 
   return false;

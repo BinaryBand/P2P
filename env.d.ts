@@ -1,6 +1,6 @@
 type Address = import("./src/tools/typing").Address;
 type Base64 = import("./src/tools/typing").Base64;
-type Uuid = import("./src/tools/typing").Uuid;
+type Uuid = `${string}-${string}-${string}-${string}-${string}`;
 
 interface PeerData {
   peerId: import("@libp2p/interface").PeerId;
@@ -74,3 +74,5 @@ interface PeerDistancePair {
 }
 
 type ProtocolEvents = Record<string, CustomEvent<Parcel<ReqData>>>;
+
+type AsyncIsh<T, U> = (evt: T) => void | U | Promise<void | U>;

@@ -7,16 +7,7 @@ import { Uint8ArrayList } from "uint8arraylist";
 import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
-import {
-  decode,
-  bytesToBase64,
-  isParcel,
-  isReturn,
-  isRequest,
-  encodePeerId,
-  decodeAddress,
-  newUuid,
-} from "./tools/typing.js";
+import { decode, bytesToBase64, isParcel, isReturn, isRequest, encodePeerId, decodeAddress } from "./tools/typing.js";
 import { blake2b } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
@@ -124,7 +115,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   protected async sendRequest<T extends ReqData, U extends ResData>(peerId: PeerId, payload: T): Promise<Return<U>> {
     const sender: Address = encodePeerId(this.peerId);
 
-    const callbackId: Uuid = newUuid();
+    const callbackId: Uuid = crypto.randomUUID();
     const parcel: Parcel<T> = { callbackId, payload, sender };
     const result: Return<U> = await this.sendParcel<T, U>(peerId, parcel);
     assert(result.success, (result as Rejection).message);
@@ -214,11 +205,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
    * This method overrides the base `addEventListener` to provide additional logic for
    * handling peer-to-peer event responses, including error handling and response packaging.
    */
-  public addEventListener<K extends keyof T>(
-    type: K,
-    args: (evt: T[K]) => void | ResData | Promise<void | ResData>,
-    opts?: AddEventListenerOptions
-  ): void {
+  public addEventListener<K extends keyof T>(type: K, args: AsyncIsh<T[K], ResData>): void {
     const eventWrapper = async (event: T[K]): Promise<void> => {
       const peerId: PeerId = decodeAddress(event.detail.sender);
       const sender: Address = encodePeerId(this.peerId);
@@ -240,7 +227,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
       }
     };
 
-    super.addEventListener(type, eventWrapper, opts);
+    super.addEventListener(type, eventWrapper);
   }
 
   public async start(): Promise<void> {
