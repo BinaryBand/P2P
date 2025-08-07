@@ -50,7 +50,10 @@ async function main() {
   const nodes = await Promise.all([
     getNewClient(["/ip4/0.0.0.0/udp/5000/webrtc-direct"]),
     getNewClient(["/ip4/0.0.0.0/udp/5001/webrtc-direct"]),
-    getNewClient(["/ip4/0.0.0.0/udp/5002/webrtc-direct"]),
+    getNewClient(["/ip4/0.0.0.0/udp/5002/webrtc-direct"], undefined, "test-passphrase"),
+    getNewClient(["/ip4/0.0.0.0/udp/5003/webrtc-direct"]),
+    getNewClient(["/ip4/0.0.0.0/udp/5004/webrtc-direct"]),
+    getNewClient(["/ip4/0.0.0.0/udp/5005/webrtc-direct"]),
   ]);
 
   await client.start();

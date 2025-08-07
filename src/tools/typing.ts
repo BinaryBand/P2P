@@ -61,23 +61,6 @@ function isUuid(uuid: unknown): uuid is Uuid {
   return typeof uuid === "string" && uuidRegex.test(uuid);
 }
 
-function isToken(token: unknown): token is Token {
-  return (
-    token !== null &&
-    typeof token === "object" &&
-    "challenge" in token &&
-    isBase64(token.challenge) &&
-    "peerId" in token &&
-    isAddress(token.peerId) &&
-    "signature" in token &&
-    isBase64(token.signature) &&
-    "signedAt" in token &&
-    typeof token.signedAt === "number" &&
-    "validFor" in token &&
-    typeof token.validFor === "number"
-  );
-}
-
 export function isParcel(parcel: unknown): parcel is Parcel<RequestData | Return> {
   return (
     parcel !== null &&
@@ -98,9 +81,12 @@ export function isRequest(payload: unknown): payload is RequestData {
 
   let control: RequestData;
   switch (payload.type) {
-    case HandshakeTypes.TokenRequest: {
-      control = { type: payload.type };
-      return true;
+    case HandshakeTypes.InitiationRequest: {
+      if ("stamp" in payload && isBase64(payload.stamp)) {
+        control = { stamp: payload.stamp, type: payload.type };
+        return true;
+      }
+      break;
     }
     case SwarmTypes.NearestPeersRequest:
       if (
@@ -108,22 +94,22 @@ export function isRequest(payload: unknown): payload is RequestData {
         typeof payload.n === "number" &&
         "hash" in payload &&
         isBase64(payload.hash) &&
-        "token" in payload &&
-        isToken(payload.token)
+        "stamp" in payload &&
+        isBase64(payload.stamp)
       ) {
-        control = { n: payload.n, hash: payload.hash, token: payload.token, type: payload.type };
+        control = { n: payload.n, hash: payload.hash, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
     case SwarmTypes.StoreRequest:
-      if ("data" in payload && typeof payload.data === "string" && "token" in payload && isToken(payload.token)) {
-        control = { data: payload.data, token: payload.token, type: payload.type };
+      if ("data" in payload && typeof payload.data === "string" && "stamp" in payload && isBase64(payload.stamp)) {
+        control = { data: payload.data, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
     case SwarmTypes.FetchRequest:
-      if ("hash" in payload && isBase64(payload.hash) && "token" in payload && isToken(payload.token)) {
-        control = { hash: payload.hash, token: payload.token, type: payload.type };
+      if ("hash" in payload && isBase64(payload.hash) && "stamp" in payload && isBase64(payload.stamp)) {
+        control = { hash: payload.hash, stamp: payload.stamp, type: payload.type };
         return true;
       }
   }
@@ -162,13 +148,6 @@ function isResponse(response: unknown): response is ResponseData {
     case BaseTypes.EmptyResponse: {
       control = { type: response.type };
       return true;
-    }
-    case HandshakeTypes.TokenResponse: {
-      if ("publicKey" in response && isBase64(response.publicKey) && "token" in response && isToken(response.token)) {
-        control = { publicKey: response.publicKey, token: response.token, type: response.type };
-        return true;
-      }
-      break;
     }
     case SwarmTypes.NearestPeersResponse:
       {

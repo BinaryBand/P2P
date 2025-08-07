@@ -55,10 +55,12 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
     try {
       const peerId: PeerId = decodeAddress(address);
-      const token: Token | null = await this.getPeerToken(peerId);
-      assert(token !== null, `No token found for peer ${peerId}`);
 
-      const request: NearestPeersRequest = { n, hash, token, type: SwarmTypes.NearestPeersRequest };
+      const request: NearestPeersRequest = this.stampRequest({
+        n,
+        hash,
+        type: SwarmTypes.NearestPeersRequest,
+      });
       const response: Return<NearestPeersResponse> = await this.sendRequest(peerId, request);
       assert(response.success, `Failed to find nearest peers for ${peerId}`);
 
@@ -119,10 +121,11 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
     try {
       const peerId: PeerId = decodeAddress(address);
-      const token: Token | null = await this.getPeerToken(peerId);
-      assert(token !== null, `No token found for peer ${peerId}`);
 
-      const request: StoreRequest = { data, token, type: SwarmTypes.StoreRequest };
+      const request: StoreRequest = this.stampRequest({
+        data,
+        type: SwarmTypes.StoreRequest,
+      });
       await this.sendRequest(peerId, request);
       return true;
     } catch (err) {
@@ -138,10 +141,11 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
     try {
       const peerId: PeerId = decodeAddress(address);
-      const token: Token | null = await this.getPeerToken(peerId);
-      assert(token !== null, `No token found for peer ${peerId}`);
 
-      const request: FetchRequest = { hash, token, type: SwarmTypes.FetchRequest };
+      const request: FetchRequest = this.stampRequest({
+        hash,
+        type: SwarmTypes.FetchRequest,
+      });
       const response: Return<FetchResponse> = await this.sendRequest(peerId, request);
       assert(response.success, `Failed to find nearest peers for ${peerId}`);
 
@@ -181,18 +185,18 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private onPeersRequest({ detail }: CustomEvent<Parcel<NearestPeersRequest>>): NearestPeersResponse {
-    assert(this.verifyToken(detail.payload.token), "Invalid token in nearest peers request");
+    this.verifyStamp(detail.payload);
     const peers: Address[] = this.getNearestLocals(detail.payload.hash, detail.payload.n);
     return { peers, type: SwarmTypes.NearestPeersResponse };
   }
 
   private onStoreRequest({ detail }: CustomEvent<Parcel<StoreRequest>>): void {
-    assert(this.verifyToken(detail.payload.token), "Invalid token in storage request");
+    this.verifyStamp(detail.payload);
     this.saveDataLocally(detail.payload.data);
   }
 
   private onFetchRequest({ detail }: CustomEvent<Parcel<FetchRequest>>): FetchResponse {
-    assert(this.verifyToken(detail.payload.token), "Invalid token in fetch request");
+    this.verifyStamp(detail.payload);
     const fragment: string | null = this.getLocalData(detail.payload.hash) ?? null;
     return { fragment, type: SwarmTypes.FetchResponse };
   }

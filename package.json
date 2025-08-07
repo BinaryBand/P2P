@@ -12,7 +12,8 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "devDependencies": {
-    "@types/node": "^24.1.0"
+    "@types/node": "^24.1.0",
+    "@types/speakeasy": "^2.0.10"
   },
   "dependencies": {
     "@chainsafe/libp2p-gossipsub": "^14.1.1",
@@ -29,6 +30,7 @@
     "@noble/curves": "^1.9.4",
     "libp2p": "^2.9.0",
     "lru-cache": "^11.1.0",
-    "shamir-secret-sharing": "^0.0.4"
+    "shamir-secret-sharing": "^0.0.4",
+    "speakeasy": "^2.0.0"
   }
 }
