@@ -4,7 +4,7 @@ type Uuid = import("./src/tools/typing").Uuid;
 
 interface PeerData {
   peerId: import("@libp2p/interface").PeerId;
-  token?: Token;
+  token: Token | null;
 }
 
 interface Acceptance<T extends ResponseData> {
@@ -43,7 +43,7 @@ interface NearestPeersResponse {
 }
 
 interface FetchResponse {
-  fragment: string | undefined;
+  fragment: string | null;
   type: import("./src/swarm-proto").SwarmTypes.FetchResponse;
 }
 

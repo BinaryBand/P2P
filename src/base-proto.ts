@@ -149,11 +149,12 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     return messageCount;
   }
 
-  private static parseParcel<T extends RequestData>(rawMessage: string): Parcel<T> | undefined {
+  private static parseParcel<T extends RequestData>(rawMessage: string): Parcel<T> | null {
     try {
       const parcel: Parcel<T> = JSON.parse(rawMessage);
       if (isParcel(parcel)) return parcel;
     } catch {}
+    return null;
   }
 
   /**
@@ -182,8 +183,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
       const messageCount: number = this.countDuplicateMessages(rawMessage);
       assert(messageCount < 8, `Excessive duplicates detected: ${rawMessage}`);
 
-      const detail: Parcel<RequestData | Return> | undefined = BaseProto.parseParcel(rawMessage);
-      assert(detail !== undefined, `Invalid parcel received: ${rawMessage}`);
+      const detail: Parcel<RequestData | Return> | null = BaseProto.parseParcel(rawMessage);
+      assert(detail !== null, `Invalid parcel received: ${rawMessage}`);
       assert(encodePeerId(connection.remotePeer) === detail.sender, `${connection.remotePeer} !== ${detail.sender}`);
 
       // If this is a callback response, invoke the callback instead of treating it like a new event
@@ -230,11 +231,11 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
         const res: ResponseData | void = await args(event);
 
         let payload: Return<ResponseData>;
-        if (res !== undefined) {
-          payload = { data: res, success: true };
+        if (!res) {
+          payload = { data: { type: BaseTypes.EmptyResponse }, success: true };
           returnParcel = { callbackId: event.detail.callbackId, payload, sender };
         } else {
-          payload = { data: { type: BaseTypes.EmptyResponse }, success: true };
+          payload = { data: res, success: true };
           returnParcel = { callbackId: event.detail.callbackId, payload, sender };
         }
       } catch (err: unknown) {

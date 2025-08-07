@@ -46,10 +46,10 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
    * Otherwise, a token request is sent to the remote peer to obtain the token.
    *
    * @param peerId - The identifier of the peer whose token is to be retrieved.
-   * @returns A promise that resolves to the peer's token, or `undefined` if not available.
+   * @returns A promise that resolves to the peer's token, or `null` if not available.
    */
-  protected async getPeerToken(peerId: PeerId): Promise<Token | undefined> {
-    const peerData: PeerData | undefined = this.peers.get(encodePeerId(peerId));
+  protected async getPeerToken(peerId: PeerId): Promise<Token | null> {
+    const peerData: PeerData | null = this.peers.get(encodePeerId(peerId)) ?? null;
 
     const remoteTokenCallback = async () => {
       const tokenRequest: TokenRequest = { type: HandshakeTypes.TokenRequest };
@@ -113,8 +113,8 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     console.info(`${this.peerId}: Initiating handshake with peer: ${detail.peerId.toString()}`);
 
     try {
-      const token: Token | undefined = await this.getPeerToken(detail.peerId);
-      assert(token !== undefined, `No token found for peer ${detail.peerId}`);
+      const token: Token | null = await this.getPeerToken(detail.peerId);
+      assert(token !== null, `No token found for peer ${detail.peerId}`);
 
       this.addPeer(detail.peerId, token);
     } catch (err) {

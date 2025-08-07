@@ -78,8 +78,8 @@ async function main() {
   const mockHash: Base64 = client.services.proto.saveDataLocally(mockData);
   console.log("Data stored with hash:", mockHash);
 
-  let clientData: string | undefined = client.services.proto.getLocalData(mockHash);
-  let nodeData: (string | undefined)[] = nodes.map((node) => node.services.proto.getLocalData(mockHash));
+  let clientData: string | null = client.services.proto.getLocalData(mockHash);
+  let nodeData: (string | null)[] = nodes.map((node) => node.services.proto.getLocalData(mockHash));
   console.log("Data retrieved from client:", { clientData, ...nodeData });
 
   /*****************
@@ -93,12 +93,8 @@ async function main() {
   nodeData = nodes.map((node) => node.services.proto.getLocalData(remoteHash));
   console.log("Data retrieved from client:", { clientData, ...nodeData });
 
-  const networkData: string | undefined = await client.services.proto.fetchData(remoteHash);
+  const networkData: string | null = await client.services.proto.fetchData(remoteHash);
   console.log("Data fetched from network:", networkData);
-
-  // const retrievedData: string | undefined = client.services.proto.getData(hash);
-  // console.log("Retrieved data:", retrievedData);
-  // assert(retrievedData === mockData, "Retrieved data does not match stored data");
 
   /*************/
   await new Promise((resolve) => setTimeout(resolve, 2500));

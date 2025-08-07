@@ -55,8 +55,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
     try {
       const peerId: PeerId = decodeAddress(address);
-      const token: Token | undefined = await this.getPeerToken(peerId);
-      assert(token !== undefined, `No token found for peer ${peerId}`);
+      const token: Token | null = await this.getPeerToken(peerId);
+      assert(token !== null, `No token found for peer ${peerId}`);
 
       const request: NearestPeersRequest = { n, hash, token, type: SwarmTypes.NearestPeersRequest };
       const response: Return<NearestPeersResponse> = await this.sendRequest(peerId, request);
@@ -74,7 +74,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return bytesToBase64(key);
   }
 
-  private static verifyDataFragment(hash: Base64, fragment?: string): boolean {
+  private static verifyDataFragment(hash: Base64, fragment: string | null): boolean {
     if (!fragment) return false;
     const expectedHash: Base64 = SwarmProto.hashFromData(fragment);
     return expectedHash === hash;
@@ -119,8 +119,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
     try {
       const peerId: PeerId = decodeAddress(address);
-      const token: Token | undefined = await this.getPeerToken(peerId);
-      assert(token !== undefined, `No token found for peer ${peerId}`);
+      const token: Token | null = await this.getPeerToken(peerId);
+      assert(token !== null, `No token found for peer ${peerId}`);
 
       const request: StoreRequest = { data, token, type: SwarmTypes.StoreRequest };
       await this.sendRequest(peerId, request);
@@ -131,24 +131,24 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     }
   }
 
-  protected async getRemoteStorage(address: Address, hash: Base64): Promise<string | undefined> {
+  protected async getRemoteStorage(address: Address, hash: Base64): Promise<string | null> {
     if (encodePeerId(this.peerId) === address) {
-      return this.getLocalData(hash);
+      return this.getLocalData(hash) ?? null;
     }
 
     try {
       const peerId: PeerId = decodeAddress(address);
-      const token: Token | undefined = await this.getPeerToken(peerId);
-      assert(token !== undefined, `No token found for peer ${peerId}`);
+      const token: Token | null = await this.getPeerToken(peerId);
+      assert(token !== null, `No token found for peer ${peerId}`);
 
       const request: FetchRequest = { hash, token, type: SwarmTypes.FetchRequest };
       const response: Return<FetchResponse> = await this.sendRequest(peerId, request);
       assert(response.success, `Failed to find nearest peers for ${peerId}`);
 
-      return response.data.fragment;
+      return response.data.fragment ?? null;
     } catch (err) {
       console.warn(`Error getting remote storage from ${address}:`, err);
-      return undefined;
+      return null;
     }
   }
 
@@ -165,19 +165,19 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return query;
   }
 
-  public getLocalData(query: Base64): string | undefined {
-    return this.storage.get(query);
+  public getLocalData(query: Base64): string | null {
+    return this.storage.get(query) ?? null;
   }
 
-  public async fetchData(hash: Base64): Promise<string | undefined> {
+  public async fetchData(hash: Base64): Promise<string | null> {
     const nearestPeers: Address[] = this.getNearestLocals(hash, SwarmProto.SWARM_SIZE);
     const responses = await Promise.all(nearestPeers.map((peer: Address) => this.getRemoteStorage(peer, hash)));
 
     const filteredResponses: string[] = responses
-      .filter((data) => SwarmProto.verifyDataFragment(hash, data))
-      .filter((data?: string): data is string => typeof data === "string");
+      .filter((data: string | null) => SwarmProto.verifyDataFragment(hash, data))
+      .filter((data: string | null): data is string => typeof data === "string");
 
-    return filteredResponses.pop();
+    return filteredResponses.pop() ?? null;
   }
 
   private onPeersRequest({ detail }: CustomEvent<Parcel<NearestPeersRequest>>): NearestPeersResponse {
@@ -193,7 +193,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
   private onFetchRequest({ detail }: CustomEvent<Parcel<FetchRequest>>): FetchResponse {
     assert(this.verifyToken(detail.payload.token), "Invalid token in fetch request");
-    const fragment: string | undefined = this.getLocalData(detail.payload.hash);
+    const fragment: string | null = this.getLocalData(detail.payload.hash) ?? null;
     return { fragment, type: SwarmTypes.FetchResponse };
   }
 

@@ -179,11 +179,10 @@ function isResponse(response: unknown): response is ResponseData {
       }
       break;
     case SwarmTypes.FetchResponse: {
-      if ("fragment" in response && (typeof response.fragment === "string" || response.fragment === undefined)) {
-        control = { fragment: "fragment" in response ? response.fragment : undefined, type: response.type };
+      if ("fragment" in response && (typeof response.fragment === "string" || response.fragment === null)) {
+        control = { fragment: response.fragment, type: response.type };
         return true;
       }
-      break;
     }
   }
 
