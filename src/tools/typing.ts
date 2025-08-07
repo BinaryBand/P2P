@@ -61,7 +61,7 @@ function isUuid(uuid: unknown): uuid is Uuid {
   return typeof uuid === "string" && uuidRegex.test(uuid);
 }
 
-export function isParcel(parcel: unknown): parcel is Parcel<RequestData | Return> {
+export function isParcel(parcel: unknown): parcel is Parcel<ReqData | Return> {
   return (
     parcel !== null &&
     typeof parcel === "object" &&
@@ -74,12 +74,12 @@ export function isParcel(parcel: unknown): parcel is Parcel<RequestData | Return
   );
 }
 
-export function isRequest(payload: unknown): payload is RequestData {
+export function isRequest(payload: unknown): payload is ReqData {
   if (!payload || typeof payload !== "object" || !("type" in payload)) {
     return false;
   }
 
-  let control: RequestData;
+  let control: ReqData;
   switch (payload.type) {
     case HandshakeTypes.InitiationRequest: {
       if ("stamp" in payload && isBase64(payload.stamp)) {
@@ -138,12 +138,12 @@ export function isReturn(returnValue: unknown): returnValue is Return {
   return false;
 }
 
-function isResponse(response: unknown): response is ResponseData {
+function isResponse(response: unknown): response is ResData {
   if (!response || typeof response !== "object" || !("type" in response)) {
     return false;
   }
 
-  let control: ResponseData;
+  let control: ResData;
   switch (response.type) {
     case BaseTypes.EmptyResponse: {
       control = { type: response.type };

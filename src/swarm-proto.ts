@@ -55,12 +55,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
     try {
       const peerId: PeerId = decodeAddress(address);
-
-      const request: NearestPeersRequest = this.stampRequest({
-        n,
-        hash,
-        type: SwarmTypes.NearestPeersRequest,
-      });
+      const request: NearestPeersRequest = this.stampRequest({ n, hash, type: SwarmTypes.NearestPeersRequest });
       const response: Return<NearestPeersResponse> = await this.sendRequest(peerId, request);
       assert(response.success, `Failed to find nearest peers for ${peerId}`);
 
@@ -121,11 +116,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
     try {
       const peerId: PeerId = decodeAddress(address);
-
-      const request: StoreRequest = this.stampRequest({
-        data,
-        type: SwarmTypes.StoreRequest,
-      });
+      const request: StoreRequest = this.stampRequest({ data, type: SwarmTypes.StoreRequest });
       await this.sendRequest(peerId, request);
       return true;
     } catch (err) {
@@ -141,11 +132,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
     try {
       const peerId: PeerId = decodeAddress(address);
-
-      const request: FetchRequest = this.stampRequest({
-        hash,
-        type: SwarmTypes.FetchRequest,
-      });
+      const request: FetchRequest = this.stampRequest({ hash, type: SwarmTypes.FetchRequest });
       const response: Return<FetchResponse> = await this.sendRequest(peerId, request);
       assert(response.success, `Failed to find nearest peers for ${peerId}`);
 

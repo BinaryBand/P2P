@@ -77,7 +77,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     return BaseProto.byteArrayToString(chunks);
   }
 
-  private async sendParcelNoCallback<T extends RequestData | Return>(peerId: PeerId, parcel: Parcel<T>): Promise<void> {
+  private async sendParcelNoCallback<T extends ReqData | Return>(peerId: PeerId, parcel: Parcel<T>): Promise<void> {
     const connection: Connection = await this.getConnection(peerId);
     const outgoing: Stream = await connection.newStream(BaseProto.PROTOCOL);
     try {
@@ -89,7 +89,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     }
   }
 
-  private async sendParcel<T extends RequestData, U extends ResponseData>(
+  private async sendParcel<T extends ReqData, U extends ResData>(
     peerId: PeerId,
     parcel: Parcel<T>
   ): Promise<Return<U>> {
@@ -121,10 +121,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
    * @returns A promise that resolves to the response data wrapped in a `Return<U>` object.
    * @throws {Error} If the response indicates failure (`result.success` is false).
    */
-  protected async sendRequest<T extends RequestData, U extends ResponseData>(
-    peerId: PeerId,
-    payload: T
-  ): Promise<Return<U>> {
+  protected async sendRequest<T extends ReqData, U extends ResData>(peerId: PeerId, payload: T): Promise<Return<U>> {
     const sender: Address = encodePeerId(this.peerId);
 
     const callbackId: Uuid = newUuid();
@@ -149,7 +146,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     return messageCount;
   }
 
-  private static parseParcel<T extends RequestData>(rawMessage: string): Parcel<T> | null {
+  private static parseParcel<T extends ReqData>(rawMessage: string): Parcel<T> | null {
     try {
       const parcel: Parcel<T> = JSON.parse(rawMessage);
       if (isParcel(parcel)) return parcel;
@@ -183,7 +180,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
       const messageCount: number = this.countDuplicateMessages(rawMessage);
       assert(messageCount < 8, `Excessive duplicates detected: ${rawMessage}`);
 
-      const detail: Parcel<RequestData | Return> | null = BaseProto.parseParcel(rawMessage);
+      const detail: Parcel<ReqData | Return> | null = BaseProto.parseParcel(rawMessage);
       assert(detail !== null, `Invalid parcel received: ${rawMessage}`);
       assert(encodePeerId(connection.remotePeer) === detail.sender, `${connection.remotePeer} !== ${detail.sender}`);
 
@@ -205,7 +202,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
    * Registers an asynchronous event listener for a specific event type.
    *
    * @typeParam K - The event type key, constrained to the keys of `T`.
-   * @typeParam U - The response data type, extending `ResponseData`.
+   * @typeParam U - The response data type, extending `ResData`.
    * @param type - The event type to listen for.
    * @param args - An asynchronous callback function that handles the event and returns a response or a promise of a response.
    *
@@ -219,7 +216,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
    */
   public addEventListener<K extends keyof T>(
     type: K,
-    args: (evt: T[K]) => void | ResponseData | Promise<void | ResponseData>,
+    args: (evt: T[K]) => void | ResData | Promise<void | ResData>,
     opts?: AddEventListenerOptions
   ): void {
     const eventWrapper = async (event: T[K]): Promise<void> => {
@@ -228,16 +225,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
 
       let returnParcel: Parcel<Return>;
       try {
-        const res: ResponseData | void = await args(event);
-
-        let payload: Return<ResponseData>;
-        if (!res) {
-          payload = { data: { type: BaseTypes.EmptyResponse }, success: true };
-          returnParcel = { callbackId: event.detail.callbackId, payload, sender };
-        } else {
-          payload = { data: res, success: true };
-          returnParcel = { callbackId: event.detail.callbackId, payload, sender };
-        }
+        const res: ResData = (await args(event)) ?? { type: BaseTypes.EmptyResponse };
+        returnParcel = { callbackId: event.detail.callbackId, payload: { data: res, success: true }, sender };
       } catch (err: unknown) {
         const errorMessage: string = err instanceof Error ? err.message : String(err);
         const payload: Rejection = { success: false, message: errorMessage };

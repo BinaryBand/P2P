@@ -36,7 +36,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     return (params: Components) => new HandshakeProto(params, passphrase);
   }
 
-  protected stampRequest<T extends RequestData>(payload: Omit<T, "stamp">): T {
+  protected stampRequest<T extends ReqData>(payload: Omit<T, "stamp">): T {
     const data: string = JSON.stringify(payload);
 
     const otp: string = speakeasy.totp({ secret: this.initiationToken });
@@ -46,7 +46,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     return { ...payload, stamp } as T;
   }
 
-  protected verifyStamp(payload: Partial<RequestData>): boolean {
+  protected verifyStamp(payload: Partial<ReqData>): boolean {
     if (!payload.stamp) {
       console.warn("Missing stamp");
       return false;

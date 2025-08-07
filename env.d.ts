@@ -6,7 +6,7 @@ interface PeerData {
   peerId: import("@libp2p/interface").PeerId;
 }
 
-interface Acceptance<T extends ResponseData> {
+interface Acceptance<T extends ResData> {
   data: T;
   success: true;
 }
@@ -16,7 +16,7 @@ interface Rejection {
   success: false;
 }
 
-type Return<T extends ResponseData = ResponseData> = Acceptance<T> | Rejection;
+type Return<T extends ResData = ResData> = Acceptance<T> | Rejection;
 
 interface EmptyResponse {
   type: import("./src/base-proto").BaseTypes.EmptyResponse;
@@ -32,7 +32,7 @@ interface FetchResponse {
   type: import("./src/swarm-proto").SwarmTypes.FetchResponse;
 }
 
-type ResponseData = EmptyResponse | NearestPeersResponse | FetchResponse;
+type ResData = EmptyResponse | NearestPeersResponse | FetchResponse;
 
 interface InitiationRequest {
   stamp: Base64;
@@ -58,19 +58,19 @@ interface FetchRequest {
   type: import("./src/swarm-proto").SwarmTypes.FetchRequest;
 }
 
-type RequestData = InitiationRequest | NearestPeersRequest | StoreRequest | FetchRequest;
+type ReqData = InitiationRequest | NearestPeersRequest | StoreRequest | FetchRequest;
 
-interface Parcel<T extends RequestData | Return> {
+interface Parcel<T extends ReqData | Return> {
   callbackId: Uuid;
   payload: T;
   sender: Address;
 }
 
-type Callback<T extends ResponseData = ResponseData> = (res: Return<T>) => void;
+type Callback<T extends ResData = ResData> = (res: Return<T>) => void;
 
 interface PeerDistancePair {
   peer: Address;
   distance: number;
 }
 
-type ProtocolEvents = Record<string, CustomEvent<Parcel<RequestData>>>;
+type ProtocolEvents = Record<string, CustomEvent<Parcel<ReqData>>>;
