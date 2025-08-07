@@ -1,10 +1,9 @@
 import { IdentifyResult, Libp2pEvents, PeerId, TypedEventTarget } from "@libp2p/interface";
 import { Components } from "libp2p/dist/src/components";
 import { LRUCache } from "lru-cache";
-import speakeasy from "speakeasy";
 
 import { bytesToBase64, encodePeerId } from "./tools/typing.js";
-import { blake2b } from "./tools/cryptography.js";
+import { blake2b, totp } from "./tools/cryptography.js";
 import BaseProto from "./base-proto.js";
 import assert from "assert";
 
@@ -17,9 +16,8 @@ export enum HandshakeTypes {
 }
 
 export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto<T> {
-  private readonly initiationToken: string;
-
   private static readonly DEFAULT_PASSPHRASE: string = "reconcile-stranger-clash";
+  private readonly initiationToken: Uint8Array;
 
   protected events: TypedEventTarget<Libp2pEvents>;
   protected peers: LRUCache<Address, PeerData> = new LRUCache({ max: 256 });
@@ -27,25 +25,45 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   constructor(components: Components, passphrase: string = HandshakeProto.DEFAULT_PASSPHRASE) {
     super(components);
     this.events = components.events;
-
-    const token: Uint8Array = blake2b(passphrase);
-    this.initiationToken = bytesToBase64(token);
+    this.initiationToken = blake2b(passphrase);
   }
 
   public static Handshake<T extends HandshakeEvents>(passphrase?: string): (params: Components) => HandshakeProto<T> {
     return (params: Components) => new HandshakeProto(params, passphrase);
   }
 
+  /**
+   * Stamps a request payload with a cryptographic signature.
+   *
+   * This method takes a payload object (excluding the `stamp` property), serializes it,
+   * generates a one-time password (OTP) using the initiation token, and creates a signature
+   * using the Blake2b hash algorithm. The resulting signature is encoded in Base64 and added
+   * to the payload as the `stamp` property.
+   *
+   * @typeParam T - The type of the request data, which must include a `stamp` property.
+   * @param payload - The request payload object without the `stamp` property.
+   * @returns The payload object with the generated `stamp` property included.
+   */
   protected stampRequest<T extends ReqData>(payload: Omit<T, "stamp">): T {
     const data: string = JSON.stringify(payload);
 
-    const otp: string = speakeasy.totp({ secret: this.initiationToken });
-    const signature: Uint8Array = blake2b(data, otp);
-    const stamp: Base64 = bytesToBase64(signature);
+    const otp: Uint8Array = totp(this.initiationToken);
+    const sig: Uint8Array = blake2b(data, otp);
+    const stamp: Base64 = bytesToBase64(sig);
 
     return { ...payload, stamp } as T;
   }
 
+  /**
+   * Verifies the integrity and authenticity of a payload using a time-based one-time password (TOTP) and a Blake2b hash.
+   *
+   * This method checks if the payload contains a valid `stamp` property. It then generates a hash signature
+   * from the payload (excluding the `stamp`), using a TOTP derived from the `initiationToken`. The method
+   * compares the base64-encoded expected signature with the provided `stamp` to determine validity.
+   *
+   * @param payload - A partial request data object that may contain a `stamp` property.
+   * @returns `true` if the `stamp` is present and matches the expected signature; otherwise, `false`.
+   */
   protected verifyStamp(payload: Partial<ReqData>): boolean {
     if (!payload.stamp) {
       console.warn("Missing stamp");
@@ -53,10 +71,9 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     }
 
     const data: string = JSON.stringify({ ...payload, stamp: undefined });
-    const otp: string = speakeasy.totp({ secret: this.initiationToken });
-    const expectedSignature: Uint8Array = blake2b(data, otp);
-
-    return bytesToBase64(expectedSignature) === payload.stamp;
+    const otp: Uint8Array = totp(this.initiationToken);
+    const expectedSig: Uint8Array = blake2b(data, otp);
+    return bytesToBase64(expectedSig) === payload.stamp;
   }
 
   private addPeer(peerId: PeerId): void {

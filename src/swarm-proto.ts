@@ -5,7 +5,7 @@ import { LRUCache } from "lru-cache";
 import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
 import { bytesToBase64, decodeAddress, encodePeerId } from "./tools/typing.js";
 import { blake2b } from "./tools/cryptography.js";
-import { orderPeers } from "./tools/routing.js";
+import { calculateDistance, orderPeers } from "./tools/routing.js";
 import { assert } from "./tools/utils.js";
 
 export interface SwarmEvents extends HandshakeEvents {
@@ -23,12 +23,22 @@ export enum SwarmTypes {
   FetchResponse = "swarm:fetch-response",
 }
 
+interface StorageItem {
+  data: string;
+  hash: Base64;
+  timestamp: number;
+}
+
 export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T> {
   private static readonly MAX_RECURSION_DEPTH: number = 5;
-  private static readonly MAX_STORAGE_SIZE: number = 2048;
+  private static readonly MAX_STORAGE_SIZE: number = 4096;
+  private static readonly AUDIT_INTERVAL: number = 60_000; // 1 minute
+  private static readonly FRESHNESS_THRESHOLD: number = 180_000; // 3 minutes
+  private static readonly REDUNDANCY_MARGIN: number = 10; // Audit `n` healthy fragments per audit cycle
   private static readonly SWARM_SIZE: number = 3;
 
-  protected storage: LRUCache<Base64, string> = new LRUCache({ max: SwarmProto.MAX_STORAGE_SIZE });
+  private auditTimer: NodeJS.Timeout | null = null;
+  protected storage: LRUCache<Base64, StorageItem> = new LRUCache({ max: SwarmProto.MAX_STORAGE_SIZE });
 
   constructor(components: Components, passphrase?: string) {
     super(components, passphrase);
@@ -39,7 +49,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private getNearestLocalPairs(hash: Base64, n: number): PeerDistancePair[] {
-    const candidates: Address[] = Array.from(this.peers.keys());
+    const candidates: Address[] = [encodePeerId(this.peerId), ...this.peers.keys()];
     const distances: PeerDistancePair[] = orderPeers(hash, candidates);
     return distances.slice(0, n);
   }
@@ -48,7 +58,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return this.getNearestLocalPairs(hash, n).map(({ peer }) => peer);
   }
 
-  protected async getNearestRemote(address: Address, hash: Base64, n: number): Promise<Address[]> {
+  private async getNearestRemotes(address: Address, hash: Base64, n: number): Promise<Address[]> {
     if (encodePeerId(this.peerId) === address) {
       return this.getNearestLocals(hash, n);
     }
@@ -94,7 +104,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
     let prevMinDistance: number = peers[0]?.distance ?? Infinity;
     for (let i: number = 0; i < SwarmProto.MAX_RECURSION_DEPTH; i++) {
-      const wideNet = await Promise.all(peers.map(({ peer }) => this.getNearestRemote(peer, hash, n)));
+      const wideNet = await Promise.all(peers.map(({ peer }) => this.getNearestRemotes(peer, hash, n)));
       peers = orderPeers(hash, wideNet.flat());
 
       const currMinDistance: number = peers[0]?.distance ?? prevMinDistance;
@@ -125,7 +135,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     }
   }
 
-  protected async getRemoteStorage(address: Address, hash: Base64): Promise<string | null> {
+  private async getRemoteStorage(address: Address, hash: Base64): Promise<string | null> {
     if (encodePeerId(this.peerId) === address) {
       return this.getLocalData(hash) ?? null;
     }
@@ -143,12 +153,30 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     }
   }
 
+  /**
+   * Saves the provided data string locally in the storage using a base64-encoded hash as the key.
+   *
+   * @param data - The string data to be saved locally.
+   * @returns The base64-encoded hash generated from the input data, used as the storage key.
+   */
   public saveDataLocally(data: string): Base64 {
-    const query: Base64 = SwarmProto.hashFromData(data);
-    this.storage.set(query, data);
-    return query;
+    const hash: Base64 = SwarmProto.hashFromData(data);
+    const timestamp: number = Date.now();
+    const storageItem: StorageItem = { data, hash, timestamp };
+
+    this.storage.set(hash, storageItem);
+    return hash;
   }
 
+  /**
+   * Stores the provided data across the nearest peers in the swarm.
+   *
+   * @param data - The string data to be stored.
+   * @returns A promise that resolves to the Base64-encoded hash of the data.
+   *
+   * The method computes a hash from the input data, finds the nearest peers in the swarm,
+   * and stores the data remotely on each of those peers. The hash is returned as a unique identifier.
+   */
   public async storeData(data: string): Promise<Base64> {
     const query: Base64 = SwarmProto.hashFromData(data);
     const nearestPeers: Address[] = await this.getNearestPeers(query, SwarmProto.SWARM_SIZE);
@@ -156,10 +184,26 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return query;
   }
 
-  public getLocalData(query: Base64): string | null {
-    return this.storage.get(query) ?? null;
+  /**
+   * Retrieves local data associated with the specified hash from storage.
+   *
+   * @param hash - The base64-encoded key used to look up data in storage.
+   * @returns The data as a string if found; otherwise, `null`.
+   */
+  public getLocalData(hash: Base64): string | null {
+    const storageItem: StorageItem | undefined = this.storage.get(hash);
+    return storageItem?.data ?? null;
   }
 
+  /**
+   * Fetches data associated with the given hash from the nearest peers in the swarm.
+   *
+   * This method locates the nearest peers using the provided hash, requests the data fragment from each peer,
+   * verifies the integrity of each received fragment, and returns the last valid fragment found.
+   *
+   * @param hash - The base64-encoded hash identifying the data to fetch.
+   * @returns A promise that resolves to the valid data fragment as a string, or `null` if no valid fragment is found.
+   */
   public async fetchData(hash: Base64): Promise<string | null> {
     const nearestPeers: Address[] = this.getNearestLocals(hash, SwarmProto.SWARM_SIZE);
     const responses = await Promise.all(nearestPeers.map((peer: Address) => this.getRemoteStorage(peer, hash)));
@@ -171,19 +215,70 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return filteredResponses.pop() ?? null;
   }
 
+  private async repairSwarm(data: string, storagePairs: [Address, string | null][]): Promise<void> {
+    await Promise.all(
+      storagePairs
+        .filter((pair: [Address, string | null]): pair is [Address, null] => pair[1] === null)
+        .map(([addr]: [Address, null]) => addr)
+        .map(async (addr: Address) => this.storeRemotely(addr, data))
+    );
+  }
+
+  public async auditSwarm(data: string): Promise<void> {
+    const hash: Base64 = SwarmProto.hashFromData(data);
+    const nearestPeers: Address[] = this.getNearestLocals(hash, SwarmProto.SWARM_SIZE);
+
+    const storagePairs: [Address, string | null][] = await Promise.all(
+      nearestPeers.map(async (peer: Address) => [peer, await this.getRemoteStorage(peer, hash)])
+    );
+
+    await this.repairSwarm(data, storagePairs);
+  }
+
+  private async auditStorage(): Promise<void> {
+    type StorageContainer = {
+      hash: Base64;
+      isStale: boolean;
+      distance: number;
+    };
+
+    const selfKey: Base64 = SwarmProto.hashFromData(encodePeerId(this.peerId));
+    const selfCode: Uint8Array = blake2b(selfKey);
+
+    // Calculate the distance from self and if the item is stale
+    const scanStorageFragment = ({ hash, timestamp }: StorageItem): StorageContainer => {
+      const distance: number = calculateDistance(selfCode, blake2b(hash));
+      const isStale: boolean = timestamp + SwarmProto.FRESHNESS_THRESHOLD < Date.now();
+      return { hash, isStale, distance };
+    };
+
+    // Only audit stale storage items near self
+    const storageData: StorageContainer[] = Array.from(this.storage.values()).map(scanStorageFragment);
+    const staleData: Base64[] = storageData.filter((item) => item.isStale).map(({ hash }): Base64 => hash);
+
+    // Select fresh data for auditing
+    const freshDataToAudit: Base64[] = storageData
+      .filter((item) => !item.isStale)
+      .sort((a, b): number => a.distance - b.distance)
+      .slice(0, SwarmProto.REDUNDANCY_MARGIN)
+      .map(({ hash }): Base64 => hash);
+
+    await Promise.all([...staleData, ...freshDataToAudit].map(this.auditSwarm.bind(this)));
+  }
+
   private onPeersRequest({ detail }: CustomEvent<Parcel<NearestPeersRequest>>): NearestPeersResponse {
-    this.verifyStamp(detail.payload);
+    assert(this.verifyStamp(detail.payload), "Invalid stamp");
     const peers: Address[] = this.getNearestLocals(detail.payload.hash, detail.payload.n);
     return { peers, type: SwarmTypes.NearestPeersResponse };
   }
 
   private onStoreRequest({ detail }: CustomEvent<Parcel<StoreRequest>>): void {
-    this.verifyStamp(detail.payload);
+    assert(this.verifyStamp(detail.payload), "Invalid stamp");
     this.saveDataLocally(detail.payload.data);
   }
 
   private onFetchRequest({ detail }: CustomEvent<Parcel<FetchRequest>>): FetchResponse {
-    this.verifyStamp(detail.payload);
+    assert(this.verifyStamp(detail.payload), "Invalid stamp");
     const fragment: string | null = this.getLocalData(detail.payload.hash) ?? null;
     return { fragment, type: SwarmTypes.FetchResponse };
   }
@@ -193,6 +288,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     this.addEventListener(SwarmTypes.NearestPeersRequest, this.onPeersRequest.bind(this));
     this.addEventListener(SwarmTypes.StoreRequest, this.onStoreRequest.bind(this));
     this.addEventListener(SwarmTypes.FetchRequest, this.onFetchRequest.bind(this));
+
+    this.auditTimer = setInterval(this.auditStorage.bind(this), SwarmProto.AUDIT_INTERVAL);
   }
 
   public async stop(): Promise<void> {
@@ -201,5 +298,10 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     this.removeEventListener(SwarmTypes.StoreRequest, this.onStoreRequest.bind(this));
     this.removeEventListener(SwarmTypes.FetchRequest, this.onFetchRequest.bind(this));
     this.storage.clear();
+
+    if (this.auditTimer) {
+      clearInterval(this.auditTimer);
+      this.auditTimer = null;
+    }
   }
 }

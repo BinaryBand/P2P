@@ -9,7 +9,7 @@ function countSetBits(num: number): number {
   return count;
 }
 
-function calculateDistance(a: Uint8Array, b: Uint8Array): number {
+export function calculateDistance(a: Uint8Array, b: Uint8Array): number {
   const length: number = Math.min(a.length, b.length);
 
   let distance: number = 0;

@@ -50,22 +50,20 @@ async function main() {
   const nodes = await Promise.all([
     getNewClient(["/ip4/0.0.0.0/udp/5000/webrtc-direct"]),
     getNewClient(["/ip4/0.0.0.0/udp/5001/webrtc-direct"]),
-    getNewClient(["/ip4/0.0.0.0/udp/5002/webrtc-direct"], undefined, "test-passphrase"),
+    getNewClient(["/ip4/0.0.0.0/udp/5002/webrtc-direct"]),
     getNewClient(["/ip4/0.0.0.0/udp/5003/webrtc-direct"]),
-    getNewClient(["/ip4/0.0.0.0/udp/5004/webrtc-direct"]),
-    getNewClient(["/ip4/0.0.0.0/udp/5005/webrtc-direct"]),
   ]);
 
   await client.start();
   await Promise.all(nodes.map((node) => node.start()));
-  await new Promise((resolve) => setTimeout(resolve, 2500));
+  await new Promise((resolve) => setTimeout(resolve, 5000));
 
-  while (client.getPeers().length <= 2) {
+  while (client.getPeers().length < 2) {
     console.log(client.getPeers().length, "peers connected");
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   console.log("Bootstrapped with peers:", client.getPeers().length);
-  await new Promise((resolve) => setTimeout(resolve, 2500));
+  await new Promise((resolve) => setTimeout(resolve, 5000));
 
   /*****************
    * Test Peer Discovery
@@ -94,17 +92,26 @@ async function main() {
 
   clientData = client.services.proto.getLocalData(remoteHash);
   nodeData = nodes.map((node) => node.services.proto.getLocalData(remoteHash));
-  console.log("Data retrieved from client:", { clientData, ...nodeData });
+  console.log("Data retrieved from client & Nodes:", { ...nodeData, clientData });
 
   const networkData: string | null = await client.services.proto.fetchData(remoteHash);
-  console.log("Data fetched from network:", networkData);
+  console.log("Data fetched from network:", [networkData]);
 
-  /*************/
-  await new Promise((resolve) => setTimeout(resolve, 2500));
-  console.log("Stopping application...");
-  await client.stop();
-  await Promise.all(nodes.map((node) => node.stop()));
-  process.exit(0);
+  /*****************
+   * Test Audit Remote Data Storage
+   *****************/
+  await client.services.proto.auditSwarm(remoteData);
+  console.log(
+    "Data retrieved from nodes:",
+    nodes.map((node) => node.services.proto.getLocalData(remoteHash))
+  );
+
+  // /*************/
+  // await new Promise((resolve) => setTimeout(resolve, 2500));
+  // console.log("Stopping application...");
+  // await client.stop();
+  // await Promise.all(nodes.map((node) => node.stop()));
+  // process.exit(0);
 }
 
 main().catch((error) => {

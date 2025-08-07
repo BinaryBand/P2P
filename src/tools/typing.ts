@@ -8,7 +8,6 @@ import { assert } from "./utils.js";
 
 export type Address = `${Formats.Base58},${string}`;
 export type Base64 = `${Formats.Base64},${string}`;
-// export type Uuid = `${Formats.Uuid},${string}-${string}-${string}-${string}-${string}`;
 
 export enum Formats {
   Base58 = "base58",
@@ -107,6 +106,7 @@ export function isRequest(payload: unknown): payload is ReqData {
         control = { hash: payload.hash, stamp: payload.stamp, type: payload.type };
         return true;
       }
+      break;
   }
 
   return false;
@@ -140,10 +140,9 @@ function isResponse(response: unknown): response is ResData {
 
   let control: ResData;
   switch (response.type) {
-    case BaseTypes.EmptyResponse: {
+    case BaseTypes.EmptyResponse:
       control = { type: response.type };
       return true;
-    }
     case SwarmTypes.NearestPeersResponse:
       if ("peers" in response && Array.isArray(response.peers) && response.peers.every(isAddress)) {
         control = { peers: response.peers, type: response.type };
@@ -155,6 +154,7 @@ function isResponse(response: unknown): response is ResData {
         control = { fragment: response.fragment, type: response.type };
         return true;
       }
+      break;
   }
 
   return false;
