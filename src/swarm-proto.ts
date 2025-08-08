@@ -3,9 +3,9 @@ import { PeerId } from "@libp2p/interface";
 import { LRUCache } from "lru-cache";
 
 import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
-import { bytesToBase64, decodeAddress, encodePeerId } from "./tools/typing.js";
-import { blake2b } from "./tools/cryptography.js";
 import { calculateDistance, orderPeers } from "./tools/routing.js";
+import { bytesToBase64, decodeAddress } from "./tools/typing.js";
+import { blake2b } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
 export interface SwarmEvents extends HandshakeEvents {
@@ -23,21 +23,15 @@ export enum SwarmTypes {
   FetchResponse = "swarm:fetch-response",
 }
 
-interface StorageItem {
-  data: string;
-  hash: Base64;
-  timestamp: number;
-}
-
 export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T> {
   private static readonly MAX_RECURSION_DEPTH: number = 5;
   private static readonly MAX_STORAGE_SIZE: number = 4096;
-  private static readonly AUDIT_INTERVAL: number = 60_000; // 1 minute
-  private static readonly FRESHNESS_THRESHOLD: number = 180_000; // 3 minutes
+  private static readonly STORAGE_AUDIT_INTERVAL: number = 60_000; // 1 minute
+  private static readonly STORAGE_FRESHNESS_THRESHOLD: number = 180_000; // 3 minutes
   private static readonly REDUNDANCY_MARGIN: number = 10; // Audit `n` healthy fragments per audit cycle
   private static readonly SWARM_SIZE: number = 3;
 
-  private auditTimer: NodeJS.Timeout | null = null;
+  private storageAuditTimer: NodeJS.Timeout | null = null;
   protected storage: LRUCache<Base64, StorageItem> = new LRUCache({ max: SwarmProto.MAX_STORAGE_SIZE });
 
   constructor(components: Components, passphrase?: string) {
@@ -49,7 +43,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private getNearestLocalPairs(hash: Base64, n: number): PeerDistancePair[] {
-    const candidates: Address[] = [encodePeerId(this.peerId), ...this.peers.keys()];
+    const candidates: Address[] = [this.address, ...this.peers.keys()];
     const distances: PeerDistancePair[] = orderPeers(hash, candidates);
     return distances.slice(0, n);
   }
@@ -59,7 +53,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private async getNearestRemotes(address: Address, hash: Base64, n: number): Promise<Address[]> {
-    if (encodePeerId(this.peerId) === address) {
+    if (this.address === address) {
       return this.getNearestLocals(hash, n);
     }
 
@@ -119,7 +113,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private async storeRemotely(address: Address, data: string): Promise<boolean> {
-    if (encodePeerId(this.peerId) === address) {
+    if (this.address === address) {
       this.saveDataLocally(data);
       return true;
     }
@@ -136,7 +130,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private async getRemoteStorage(address: Address, hash: Base64): Promise<string | null> {
-    if (encodePeerId(this.peerId) === address) {
+    if (this.address === address) {
       return this.getLocalData(hash) ?? null;
     }
 
@@ -237,28 +231,28 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
   private async auditStorage(): Promise<void> {
     type StorageContainer = {
+      distance: number;
       hash: Base64;
       isStale: boolean;
-      distance: number;
     };
 
-    const selfKey: Base64 = SwarmProto.hashFromData(encodePeerId(this.peerId));
+    const selfKey: Base64 = SwarmProto.hashFromData(this.address);
     const selfCode: Uint8Array = blake2b(selfKey);
 
     // Calculate the distance from self and if the item is stale
     const scanStorageFragment = ({ hash, timestamp }: StorageItem): StorageContainer => {
       const distance: number = calculateDistance(selfCode, blake2b(hash));
-      const isStale: boolean = timestamp + SwarmProto.FRESHNESS_THRESHOLD < Date.now();
-      return { hash, isStale, distance };
+      const isStale: boolean = timestamp + SwarmProto.STORAGE_FRESHNESS_THRESHOLD < Date.now();
+      return { distance, hash, isStale };
     };
 
     // Only audit stale storage items near self
     const storageData: StorageContainer[] = Array.from(this.storage.values()).map(scanStorageFragment);
-    const staleData: Base64[] = storageData.filter((item) => item.isStale).map(({ hash }): Base64 => hash);
+    const staleData: Base64[] = storageData.filter(({ isStale }) => isStale).map(({ hash }): Base64 => hash);
 
     // Select fresh data for auditing
     const freshDataToAudit: Base64[] = storageData
-      .filter((item) => !item.isStale)
+      .filter(({ isStale }) => !isStale)
       .sort((a, b): number => a.distance - b.distance)
       .slice(0, SwarmProto.REDUNDANCY_MARGIN)
       .map(({ hash }): Base64 => hash);
@@ -289,7 +283,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     this.addEventListener(SwarmTypes.StoreRequest, this.onStoreRequest.bind(this));
     this.addEventListener(SwarmTypes.FetchRequest, this.onFetchRequest.bind(this));
 
-    this.auditTimer = setInterval(this.auditStorage.bind(this), SwarmProto.AUDIT_INTERVAL);
+    const randomDelay: number = Math.random() * 1000;
+    this.storageAuditTimer = setInterval(this.auditStorage.bind(this), SwarmProto.STORAGE_AUDIT_INTERVAL + randomDelay);
   }
 
   public async stop(): Promise<void> {
@@ -299,9 +294,9 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     this.removeEventListener(SwarmTypes.FetchRequest, this.onFetchRequest.bind(this));
     this.storage.clear();
 
-    if (this.auditTimer) {
-      clearInterval(this.auditTimer);
-      this.auditTimer = null;
+    if (this.storageAuditTimer) {
+      clearInterval(this.storageAuditTimer);
+      this.storageAuditTimer = null;
     }
   }
 }

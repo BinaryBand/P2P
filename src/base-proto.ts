@@ -1,5 +1,4 @@
 import { Connection, IncomingStreamData, PeerId, Stream, TypedEventEmitter } from "@libp2p/interface";
-import { ConnectionManager, Registrar } from "@libp2p/interface-internal";
 import { Components } from "libp2p/dist/src/components";
 
 import { ed25519 } from "@noble/curves/ed25519.js";
@@ -8,7 +7,7 @@ import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
 import { decode, bytesToBase64, isParcel, isReturn, isRequest, encodePeerId, decodeAddress } from "./tools/typing.js";
-import { blake2b } from "./tools/cryptography.js";
+import { blake2b, totp } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
 export enum BaseTypes {
@@ -18,20 +17,29 @@ export enum BaseTypes {
 
 export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitter<T> {
   public static readonly PROTOCOL: string = "/secret-handshake/proto/0.5.2";
-  private static readonly CALLBACK_LIMIT: number = 32;
-  private static readonly TIMEOUT: number = 30_000;
+  private static readonly MAX_CALLBACKS: number = 32;
+  private static readonly CALLBACK_TIMEOUT: number = 30_000; // 30 seconds
+
+  private static readonly RATE_LIMIT: number = 50; // requests per 30 seconds
 
   protected readonly sk: Uint8Array;
   protected get pk(): Uint8Array {
     return ed25519.getPublicKey(this.sk);
   }
 
-  private connectionManager: ConnectionManager;
-  protected peerId: PeerId;
-  private registrar: Registrar;
+  private connectionManager: Components["connectionManager"];
+  private registrar: Components["registrar"];
 
-  private callbackQueue = new LRUCache<Uuid, Callback>({ max: BaseProto.CALLBACK_LIMIT, ttl: BaseProto.TIMEOUT });
-  private limiterCache = new LRUCache<string, number>({ max: 2048, ttl: BaseProto.TIMEOUT });
+  protected peerId: PeerId;
+  protected get address(): Address {
+    return encodePeerId(this.peerId);
+  }
+
+  private callbackQueue = new LRUCache<Uuid, Callback>({
+    max: BaseProto.MAX_CALLBACKS,
+    ttl: BaseProto.CALLBACK_TIMEOUT,
+  });
+  private requestCache = new LRUCache<string, number>({ max: 2048, ttl: BaseProto.CALLBACK_TIMEOUT });
 
   constructor(components: Components) {
     super();
@@ -91,7 +99,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
       const timeOut: NodeJS.Timeout = setTimeout((): void => {
         const message: string = `Timeout while waiting for response from: ${peerId}`;
         res({ success: false, message });
-      }, BaseProto.TIMEOUT);
+      }, BaseProto.CALLBACK_TIMEOUT);
 
       // Open a callback for the response
       this.callbackQueue.set(parcel.callbackId, (val: Return): void => {
@@ -113,10 +121,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
    * @throws {Error} If the response indicates failure (`result.success` is false).
    */
   protected async sendRequest<T extends ReqData, U extends ResData>(peerId: PeerId, payload: T): Promise<Return<U>> {
-    const sender: Address = encodePeerId(this.peerId);
-
     const callbackId: Uuid = crypto.randomUUID();
-    const parcel: Parcel<T> = { callbackId, payload, sender };
+    const parcel: Parcel<T> = { callbackId, payload, sender: this.address };
     const result: Return<U> = await this.sendParcel<T, U>(peerId, parcel);
     assert(result.success, (result as Rejection).message);
 
@@ -124,16 +130,17 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   }
 
   private exceedsRateLimit(peerId: PeerId): boolean {
-    const peerAddress: Address = encodePeerId(peerId);
-    const rateCount: number = (this.limiterCache.get(peerAddress) ?? 0) + 1;
-    this.limiterCache.set(peerAddress, rateCount);
-    return BaseProto.CALLBACK_LIMIT < rateCount;
+    const timedFingerprint: Uint8Array = totp(peerId.toCID().bytes);
+    const key: Base64 = bytesToBase64(timedFingerprint);
+    const rateCount: number = (this.requestCache.get(key) ?? 0) + 1;
+    this.requestCache.set(key, rateCount);
+    return BaseProto.RATE_LIMIT < rateCount;
   }
 
   private countDuplicateMessages(rawMessage: string): number {
     const fingerprint: Base64 = bytesToBase64(blake2b(rawMessage));
-    const messageCount: number = (this.limiterCache.get(fingerprint) ?? 0) + 1;
-    this.limiterCache.set(fingerprint, messageCount);
+    const messageCount: number = (this.requestCache.get(fingerprint) ?? 0) + 1;
+    this.requestCache.set(fingerprint, messageCount);
     return messageCount;
   }
 
@@ -208,7 +215,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   public addEventListener<K extends keyof T>(type: K, args: AsyncIsh<T[K], ResData>): void {
     const eventWrapper = async (event: T[K]): Promise<void> => {
       const peerId: PeerId = decodeAddress(event.detail.sender);
-      const sender: Address = encodePeerId(this.peerId);
+      const sender: Address = this.address;
 
       let returnParcel: Parcel<Return>;
       try {
@@ -237,6 +244,6 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   public async stop(): Promise<void> {
     await this.registrar.unhandle(BaseProto.PROTOCOL);
     this.callbackQueue.clear();
-    this.limiterCache.clear();
+    this.requestCache.clear();
   }
 }

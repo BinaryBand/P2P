@@ -82,6 +82,13 @@ export function isRequest(payload: unknown): payload is ReqData {
       }
       break;
     }
+    case HandshakeTypes.RequestPulse: {
+      if ("stamp" in payload && isBase64(payload.stamp)) {
+        control = { stamp: payload.stamp, type: payload.type };
+        return true;
+      }
+      break;
+    }
     case SwarmTypes.NearestPeersRequest:
       if (
         "n" in payload &&

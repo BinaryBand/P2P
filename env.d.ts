@@ -4,6 +4,7 @@ type Uuid = `${string}-${string}-${string}-${string}-${string}`;
 
 interface PeerData {
   peerId: import("@libp2p/interface").PeerId;
+  timestamp: number;
 }
 
 interface Acceptance<T extends ResData> {
@@ -39,6 +40,11 @@ interface InitiationRequest {
   type: import("./src/handshake-proto").HandshakeTypes.InitiationRequest;
 }
 
+interface RequestPulse {
+  stamp: Base64;
+  type: import("./src/handshake-proto").HandshakeTypes.RequestPulse;
+}
+
 interface NearestPeersRequest {
   n: number;
   hash: Base64;
@@ -58,7 +64,7 @@ interface FetchRequest {
   type: import("./src/swarm-proto").SwarmTypes.FetchRequest;
 }
 
-type ReqData = InitiationRequest | NearestPeersRequest | StoreRequest | FetchRequest;
+type ReqData = InitiationRequest | RequestPulse | NearestPeersRequest | StoreRequest | FetchRequest;
 
 interface Parcel<T extends ReqData | Return> {
   callbackId: Uuid;
@@ -71,6 +77,12 @@ type Callback<T extends ResData = ResData> = (res: Return<T>) => void;
 interface PeerDistancePair {
   peer: Address;
   distance: number;
+}
+
+interface StorageItem {
+  data: string;
+  hash: Base64;
+  timestamp: number;
 }
 
 type ProtocolEvents = Record<string, CustomEvent<Parcel<ReqData>>>;
