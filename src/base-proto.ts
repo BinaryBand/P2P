@@ -1,13 +1,13 @@
 import { Connection, IncomingStreamData, PeerId, Stream, TypedEventEmitter } from "@libp2p/interface";
 import { Components } from "libp2p/dist/src/components";
 
-import { ed25519 } from "@noble/curves/ed25519.js";
+import { x25519 } from "@noble/curves/ed25519.js";
 import { Uint8ArrayList } from "uint8arraylist";
 import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
 import { decode, bytesToBase64, isParcel, isReturn, isRequest, encodePeerId, decodeAddress } from "./tools/typing.js";
-import { blake2b, totp } from "./tools/cryptography.js";
+import { blake3, totp } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
 export enum BaseTypes {
@@ -17,14 +17,14 @@ export enum BaseTypes {
 
 export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitter<T> {
   public static readonly PROTOCOL: string = "/secret-handshake/proto/0.5.2";
-  private static readonly MAX_CALLBACKS: number = 32;
-  private static readonly CALLBACK_TIMEOUT: number = 30_000; // 30 seconds
-
-  private static readonly RATE_LIMIT: number = 50; // requests per 30 seconds
+  private static readonly MAX_CALLBACKS: number = 64; // max callbacks to keep in memory
+  private static readonly CALLBACK_TIMEOUT: number = 30_000; // 30 seconds until callback request expires
+  private static readonly RATE_LIMIT: number = 50; // max requests per 30 seconds
+  private static readonly DUPLICATE_THRESHOLD: number = 8; // max duplicate messages before rejection
 
   protected readonly sk: Uint8Array;
   protected get pk(): Uint8Array {
-    return ed25519.getPublicKey(this.sk);
+    return x25519.getPublicKey(this.sk);
   }
 
   private connectionManager: Components["connectionManager"];
@@ -76,7 +76,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     return BaseProto.byteArrayToString(chunks);
   }
 
-  private async sendParcelNoCallback<T extends ReqData | Return>(peerId: PeerId, parcel: Parcel<T>): Promise<void> {
+  private async sendParcelNoCallback<T extends ReqData | Return>(parcel: Parcel<T>): Promise<void> {
+    const peerId: PeerId = decodeAddress(parcel.receiver);
     const connection: Connection = await this.getConnection(peerId);
     const outgoing: Stream = await connection.newStream(BaseProto.PROTOCOL);
     try {
@@ -88,16 +89,13 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     }
   }
 
-  private async sendParcel<T extends ReqData, U extends ResData>(
-    peerId: PeerId,
-    parcel: Parcel<T>
-  ): Promise<Return<U>> {
-    await this.sendParcelNoCallback(peerId, parcel);
+  private async sendParcel<T extends ReqData, U extends ResData>(parcel: Parcel<T>): Promise<Return<U>> {
+    await this.sendParcelNoCallback(parcel);
 
     // Wait for the response
     return new Promise<Return<U>>((res: Callback<U>): void => {
       const timeOut: NodeJS.Timeout = setTimeout((): void => {
-        const message: string = `Timeout while waiting for response from: ${peerId}`;
+        const message: string = `Timeout while waiting for response from: ${parcel.receiver}`;
         res({ success: false, message });
       }, BaseProto.CALLBACK_TIMEOUT);
 
@@ -122,8 +120,9 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
    */
   protected async sendRequest<T extends ReqData, U extends ResData>(peerId: PeerId, payload: T): Promise<Return<U>> {
     const callbackId: Uuid = crypto.randomUUID();
-    const parcel: Parcel<T> = { callbackId, payload, sender: this.address };
-    const result: Return<U> = await this.sendParcel<T, U>(peerId, parcel);
+    const receiver: Address = encodePeerId(peerId);
+    const parcel: Parcel<T> = { callbackId, payload, receiver, sender: this.address };
+    const result: Return<U> = await this.sendParcel<T, U>(parcel);
     assert(result.success, (result as Rejection).message);
 
     return result;
@@ -138,7 +137,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   }
 
   private countDuplicateMessages(rawMessage: string): number {
-    const fingerprint: Base64 = bytesToBase64(blake2b(rawMessage));
+    const fingerprint: Base64 = bytesToBase64(blake3(rawMessage));
     const messageCount: number = (this.requestCache.get(fingerprint) ?? 0) + 1;
     this.requestCache.set(fingerprint, messageCount);
     return messageCount;
@@ -162,7 +161,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
    * Logs warnings for rate limit violations and excessive duplicate messages.
    * Catches and logs errors encountered during processing.
    *
-   * @param {IncomingStreamData} param0 - The incoming stream data containing the connection and stream.
+   * @param {IncomingStreamData} params - The incoming stream data containing the connection and stream.
    * @returns {Promise<void>} A promise that resolves when the stream has been processed.
    */
   private async onIncomingStream({ connection, stream }: IncomingStreamData): Promise<void> {
@@ -176,7 +175,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
 
       // Check for excessive duplicate messages
       const messageCount: number = this.countDuplicateMessages(rawMessage);
-      assert(messageCount < 8, `Excessive duplicates detected: ${rawMessage}`);
+      assert(messageCount < BaseProto.DUPLICATE_THRESHOLD, `Excessive duplicates detected: ${rawMessage}`);
 
       const detail: Parcel<ReqData | Return> | null = BaseProto.parseParcel(rawMessage);
       assert(detail !== null, `Invalid parcel received: ${rawMessage}`);
@@ -214,21 +213,22 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
    */
   public addEventListener<K extends keyof T>(type: K, args: AsyncIsh<T[K], ResData>): void {
     const eventWrapper = async (event: T[K]): Promise<void> => {
-      const peerId: PeerId = decodeAddress(event.detail.sender);
+      const senderPeerId: PeerId = decodeAddress(event.detail.sender); // Who sent the request
+      const receiver: Address = encodePeerId(senderPeerId); // Who will receive the response
       const sender: Address = this.address;
 
       let returnParcel: Parcel<Return>;
       try {
         const res: ResData = (await args(event)) ?? { type: BaseTypes.EmptyResponse };
-        returnParcel = { callbackId: event.detail.callbackId, payload: { data: res, success: true }, sender };
+        returnParcel = { callbackId: event.detail.callbackId, payload: { data: res, success: true }, receiver, sender };
       } catch (err: unknown) {
         const errorMessage: string = err instanceof Error ? err.message : String(err);
         const payload: Rejection = { success: false, message: errorMessage };
-        returnParcel = { callbackId: event.detail.callbackId, payload, sender };
+        returnParcel = { callbackId: event.detail.callbackId, payload, receiver, sender };
       }
 
       try {
-        this.sendParcelNoCallback(peerId, returnParcel);
+        this.sendParcelNoCallback(returnParcel);
       } catch (err) {
         console.error("Error sending parcel:", err);
       }

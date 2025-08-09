@@ -5,7 +5,7 @@ import { LRUCache } from "lru-cache";
 import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
 import { calculateDistance, orderPeers } from "./tools/routing.js";
 import { bytesToBase64, decodeAddress } from "./tools/typing.js";
-import { blake2b } from "./tools/cryptography.js";
+import { blake3 } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
 export interface SwarmEvents extends HandshakeEvents {
@@ -71,7 +71,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private static hashFromData(data: string): Base64 {
-    const key: Uint8Array = blake2b(data);
+    const key: Uint8Array = blake3(data);
     return bytesToBase64(key);
   }
 
@@ -247,11 +247,11 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     };
 
     const selfKey: Base64 = SwarmProto.hashFromData(this.address);
-    const selfCode: Uint8Array = blake2b(selfKey);
+    const selfCode: Uint8Array = blake3(selfKey);
 
     // Calculate the distance from self and if the item is stale
     const scanStorageFragment = ({ hash, timestamp }: StorageItem): StorageContainer => {
-      const distance: number = calculateDistance(selfCode, blake2b(hash));
+      const distance: number = calculateDistance(selfCode, blake3(hash));
       const isStale: boolean = timestamp + SwarmProto.STORAGE_FRESHNESS_THRESHOLD < Date.now();
       return { distance, hash, isStale };
     };

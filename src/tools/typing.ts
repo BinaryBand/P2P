@@ -16,7 +16,7 @@ export enum Formats {
   Uuid = "uuid",
 }
 
-export const decode = TextDecoder.prototype.decode.bind(new TextDecoder("utf-8"));
+export const decode = TextDecoder.prototype.decode.bind(new TextDecoder());
 export const encode = TextEncoder.prototype.encode.bind(new TextEncoder());
 
 const BASE64_REGEX: RegExp = new RegExp(`^${Formats.Base64},([a-zA-Z0-9+/]+={0,2})$`);
@@ -56,17 +56,64 @@ function isUuid(uuid: unknown): uuid is Uuid {
   return typeof uuid === "string" && UUID_REGEX.test(uuid);
 }
 
+export function isMessageFragment(fragment: unknown): fragment is MessageFragment {
+  let control: MessageFragment;
+  if (
+    fragment !== undefined &&
+    fragment !== null &&
+    typeof fragment === "object" &&
+    "id" in fragment &&
+    isUuid(fragment.id) &&
+    "content" in fragment &&
+    isBase64(fragment.content)
+  ) {
+    control = { id: fragment.id, content: fragment.content };
+    return true;
+  }
+  return false;
+}
+
+export function isMessage(message: unknown): message is Message {
+  let control: Message;
+  if (
+    message !== undefined &&
+    message !== null &&
+    typeof message === "object" &&
+    "text" in message &&
+    isBase64(message.text) &&
+    "timestamp" in message &&
+    typeof message.timestamp === "number"
+  ) {
+    control = { text: message.text, timestamp: message.timestamp };
+    return true;
+  }
+  return false;
+}
+
 export function isParcel(parcel: unknown): parcel is Parcel<ReqData | Return> {
-  return (
+  let control: Parcel<ReqData | Return>;
+  if (
+    parcel !== undefined &&
     parcel !== null &&
     typeof parcel === "object" &&
     "callbackId" in parcel &&
     isUuid(parcel.callbackId) &&
+    "receiver" in parcel &&
+    isAddress(parcel.receiver) &&
     "sender" in parcel &&
     isAddress(parcel.sender) &&
     "payload" in parcel &&
     (isRequest(parcel.payload) || isReturn(parcel.payload))
-  );
+  ) {
+    control = {
+      callbackId: parcel.callbackId,
+      payload: parcel.payload,
+      receiver: parcel.receiver,
+      sender: parcel.sender,
+    };
+    return true;
+  }
+  return false;
 }
 
 export function isRequest(payload: unknown): payload is ReqData {
@@ -190,12 +237,11 @@ function isResponse(response: unknown): response is ResData {
       }
       break;
     case MessageTypes.GetMetadataResponse:
-      return true;
-    // if ("metadata" in response && Array.isArray(response.metadata) && response.metadata.every(isBase64)) {
-    //   control = { metadata: response.metadata, type: response.type };
-    //   return true;
-    // }
-    // break;
+      if ("metadata" in response && Array.isArray(response.metadata) && response.metadata.every(isBase64)) {
+        control = { metadata: response.metadata, type: response.type };
+        return true;
+      }
+      break;
   }
 
   return false;

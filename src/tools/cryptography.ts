@@ -1,17 +1,24 @@
 import { blake2b as _blake2b } from "@noble/hashes/blake2.js";
+import { blake3 as _blake3 } from "@noble/hashes/blake3.js";
 import { combine, split } from "shamir-secret-sharing";
 import speakeasy from "speakeasy";
 
 import { base64ToBytes, bytesToBase64, decode, encode, Formats } from "./typing.js";
 
-export function blake2b(input: Uint8Array | string, key?: Uint8Array | string): Uint8Array {
+export function blake2b(input: Uint8Array, key?: Uint8Array | string): Uint8Array {
   const hash: Uint8Array = _blake2b(input, { dkLen: 32, key });
   return hash;
 }
 
-export function totp(secret: Uint8Array): Uint8Array {
+export function blake3(input: string, key?: Uint8Array): Uint8Array {
+  const hash: Uint8Array = _blake3(input, { dkLen: 32, key });
+  return hash;
+}
+
+export function totp(secret: Uint8Array, targetTime?: number): Uint8Array {
   const base64Secret: Base64 = bytesToBase64(secret);
-  const otp: string = speakeasy.totp({ secret: base64Secret, encoding: "base64" });
+  const time: number = Math.floor((targetTime ?? Date.now()) / 1000);
+  const otp: string = speakeasy.totp({ secret: base64Secret, encoding: "base64", time });
   return base64ToBytes(`${Formats.Base64},${otp}`);
 }
 

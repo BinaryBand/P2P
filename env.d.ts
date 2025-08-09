@@ -94,6 +94,7 @@ type ReqData =
 interface Parcel<T extends ReqData | Return> {
   callbackId: Uuid;
   payload: T;
+  receiver: Address;
   sender: Address;
 }
 
@@ -113,6 +114,11 @@ interface StorageItem {
 type ProtocolEvents = Record<string, CustomEvent<Parcel<ReqData>>>;
 
 type AsyncIsh<T, U> = (evt: T) => void | U | Promise<void | U>;
+
+type Message = {
+  text: string;
+  timestamp: number;
+};
 
 type MessageFragment = {
   id: Uuid;

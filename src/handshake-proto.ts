@@ -2,10 +2,10 @@ import { IdentifyResult, Libp2pEvents, PeerId, TypedEventTarget } from "@libp2p/
 import { Components } from "libp2p/dist/src/components";
 import { LRUCache } from "lru-cache";
 
-import { bytesToBase64, encodePeerId } from "./tools/typing.js";
-import { blake2b, totp } from "./tools/cryptography.js";
-import BaseProto from "./base-proto.js";
+import { bytesToBase64, encode, encodePeerId } from "./tools/typing.js";
+import { blake2b, blake3, totp } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
+import BaseProto from "./base-proto.js";
 
 export interface HandshakeEvents extends ProtocolEvents {
   [HandshakeTypes.InitiationRequest]: CustomEvent<Parcel<InitiationRequest>>;
@@ -31,38 +31,43 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   constructor(components: Components, passphrase: string = HandshakeProto.DEFAULT_PASSPHRASE) {
     super(components);
     this.events = components.events;
-    this.initiationToken = blake2b(passphrase);
+    this.initiationToken = blake3(passphrase);
   }
 
   public static Handshake<T extends HandshakeEvents>(passphrase?: string): (params: Components) => HandshakeProto<T> {
     return (params: Components) => new HandshakeProto(params, passphrase);
   }
 
+  public getPeers(): PeerData[] {
+    return Array.from(this.peers.values()).filter((peerData: PeerData) => !this.peerIsStale(peerData.peerId));
+  }
+
   /**
    * Generates a stamped request object by signing the payload with a time-based one-time password (TOTP)
-   * and a Blake2b hash, then encoding the signature as a Base64 string.
+   * and a blake2b hash, then encoding the signature as a Base64 string.
    *
    * @template T - The type of the request data, which must include a `stamp` property.
    * @param payload - The request payload without the `stamp` property.
    * @returns The payload object with an added `stamp` property containing the Base64-encoded signature.
    */
   protected stampRequest<T extends ReqData>(payload: Omit<T, "stamp">): T {
-    const data: string = JSON.stringify(payload);
+    const data: string = JSON.stringify({ ...payload, stamp: undefined });
+    const buffer: Uint8Array = encode(data);
 
     const otp: Uint8Array = totp(this.initiationToken);
-    const sig: Uint8Array = blake2b(data, otp);
+    const sig: Uint8Array = blake2b(buffer, otp);
     const stamp: Base64 = bytesToBase64(sig);
 
     return { ...payload, stamp } as T;
   }
 
   /**
-   * Verifies the integrity and authenticity of a payload using a time-based one-time password (TOTP) and a Blake2b signature.
+   * Verifies the integrity and authenticity of a payload using a time-based one-time password (TOTP) and a blake2b signature.
    *
    * The method checks if the payload contains a `stamp` property. It then generates a signature by:
    * - Serializing the payload (excluding the `stamp` property).
    * - Generating a TOTP value using the `initiationToken`.
-   * - Hashing the serialized data with the TOTP value using Blake2b.
+   * - Hashing the serialized data with the TOTP value using blake2b.
    * - Comparing the base64-encoded hash to the provided `stamp`.
    *
    * @param payload - A partial request data object that may contain a `stamp` property.
@@ -75,8 +80,16 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     }
 
     const data: string = JSON.stringify({ ...payload, stamp: undefined });
-    const otp: Uint8Array = totp(this.initiationToken);
-    const expectedSig: Uint8Array = blake2b(data, otp);
+    const buffer: Uint8Array = encode(data);
+
+    let otp: Uint8Array = totp(this.initiationToken, Date.now());
+    let expectedSig: Uint8Array = blake2b(buffer, otp);
+    if (bytesToBase64(expectedSig) === payload.stamp) {
+      return true;
+    }
+
+    otp = totp(this.initiationToken, Date.now() - 30_000); // Check for a 30-second window
+    expectedSig = blake2b(buffer, otp);
     return bytesToBase64(expectedSig) === payload.stamp;
   }
 

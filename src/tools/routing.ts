@@ -1,4 +1,4 @@
-import { blake2b } from "./cryptography.js";
+import { blake3 } from "./cryptography.js";
 
 function countSetBits(num: number): number {
   let count: number = 0;
@@ -32,11 +32,11 @@ export function calculateDistance(a: Uint8Array, b: Uint8Array): number {
  * @returns An array of `PeerDistancePair` objects, each containing a peer and its distance to the query, sorted by distance.
  */
 export function orderPeers(query: string, candidates: Address[]): PeerDistancePair[] {
-  const key: Uint8Array = blake2b(query);
+  const key: Uint8Array = blake3(query);
   const distances: PeerDistancePair[] = [];
 
   for (const peer of new Set(candidates)) {
-    const peerCode: Uint8Array = blake2b(peer);
+    const peerCode: Uint8Array = blake3(peer);
     const distance: number = calculateDistance(key, peerCode);
     distances.push({ peer, distance });
   }
