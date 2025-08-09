@@ -1,6 +1,6 @@
 import { createLibp2p } from "libp2p";
-import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
-import { webRTCDirect } from "@libp2p/webrtc";
+import { circuitRelayServer, circuitRelayTransport } from "@libp2p/circuit-relay-v2";
+import { webRTC, webRTCDirect } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
 import { Identify, identify } from "@libp2p/identify";
 import { bootstrap } from "@libp2p/bootstrap";
@@ -30,7 +30,7 @@ const stockOptions = {
   connectionEncrypters: [noise()],
   peerDiscovery: [mdns(), bootstrap({ list: bootstrapNodes })],
   streamMuxers: [yamux()],
-  transports: [circuitRelayTransport(), webRTCDirect(), webSockets()],
+  transports: [circuitRelayTransport(), webRTC(), webRTCDirect(), webSockets()],
 };
 
 function getClientOptions(addresses: string[], privateKey?: PrivateKey) {
@@ -38,7 +38,7 @@ function getClientOptions(addresses: string[], privateKey?: PrivateKey) {
     ...stockOptions,
     addresses: { listen: [...addresses, "/p2p-circuit", "/webrtc"] },
     privateKey,
-    services: { dht: kadDHT(), identify: identify(), ping: ping() },
+    services: { dht: kadDHT(), identify: identify(), ping: ping(), relay: circuitRelayServer() },
   };
 }
 
@@ -74,25 +74,18 @@ async function main() {
   await getTextInput("Press Enter to continue...");
 
   const client: Libp2p<{ proto: MessageProto<MessageEvents>; identify: Identify }> = await getNewClient(
-    ["/ip4/0.0.0.0/udp/0/webrtc-direct"],
+    ["/ip4/0.0.0.0/udp/0/webrtc-direct", "/ip4/127.0.0.1/tcp/0/ws"],
     privateKey
   );
-  // const nodes: Libp2p<{ proto: MessageProto<MessageEvents>; identify: Identify }>[] = await Promise.all([
-  //   // getNewClient(["/ip4/0.0.0.0/udp/5000/webrtc-direct"]),
-  //   // getNewClient(["/ip4/0.0.0.0/udp/5001/webrtc-direct"]),
-  //   // getNewClient(["/ip4/0.0.0.0/udp/5002/webrtc-direct"]),
-  //   // getNewClient(["/ip4/0.0.0.0/udp/5003/webrtc-direct"]),
-  // ]);
 
   await client.start();
-  // await Promise.all(nodes.map((node) => node.start()));
   await new Promise((resolve) => setTimeout(resolve, 5000));
 
   console.log("Client started with ID:", client.peerId.toString());
 
   const bootstrapPeer = peerIdFromString("12D3KooWNUG46aTGP9aKo5kJF8KQtjah74qSkH4YQqaqEHVWVktz");
   if (!bootstrapPeer.equals(client.peerId)) {
-    await client.dialProtocol(bootstrapPeer, MessageProto.PROTOCOL);
+    await client.dialProtocol(bootstrapPeer, MessageProto.PROTOCOL, { signal: AbortSignal.timeout(500_000) });
   }
 
   while (client.services.proto.getPeers().length < 2) {
@@ -102,65 +95,16 @@ async function main() {
   console.log("Bootstrapped with peers:", client.services.proto.getPeers().length);
   await new Promise((resolve) => setTimeout(resolve, 5000));
 
-  const neighbor: string = await getTextInput("Who do you want to connect to? (Enter peer ID): ");
-  const neighborPeerId: PeerId = peerIdFromString(neighbor);
-  console.log("Connecting to neighbor:", neighborPeerId.toString());
+  while (true) {
+    const neighbor: string = await getTextInput("Who do you want to connect to? (Enter peer ID): ");
+    const neighborPeerId: PeerId = peerIdFromString(neighbor);
+    console.log("Connecting to neighbor:", neighborPeerId.toString());
 
-  const message: string = await getTextInput("Enter a message to send: ");
-  console.log("Sending message:", message);
-  await client.services.proto.sendMessages(neighborPeerId, [message]);
-  console.log("Message sent successfully!");
-
-  // /*****************
-  //  * Test Local Data Storage
-  //  *****************/
-  // const mockData: string = "This is test data to be stored locally.";
-  // const mockHash: Base64 = client.services.proto.saveDataLocally(mockData);
-  // console.log("Data stored with hash:", mockHash);
-
-  // let clientData: string | null = client.services.proto.getLocalData(mockHash);
-  // let nodeData: (string | null)[] = nodes.map((node) => node.services.proto.getLocalData(mockHash));
-  // console.log("Data retrieved from client:", { clientData, ...nodeData });
-
-  // /*****************
-  //  * Test Remote Data Storage
-  //  *****************/
-  // const remoteData: string = "This is remote data stored by another peer.";
-  // const remoteHash: Base64 = await client.services.proto.storeData(remoteData);
-  // console.log("Data stored with hash:", remoteHash);
-
-  // clientData = client.services.proto.getLocalData(remoteHash);
-  // nodeData = nodes.map((node) => node.services.proto.getLocalData(remoteHash));
-  // console.log("Data retrieved from client & Nodes:", { ...nodeData, clientData });
-
-  // const networkData: string | null = await client.services.proto.fetchData(remoteHash);
-  // console.log("Data fetched from network:", [networkData]);
-
-  // /*****************
-  //  * Test Audit Remote Data Storage
-  //  *****************/
-  // await client.services.proto.auditSwarm(remoteData);
-  // console.log(
-  //   "Data from nodes:",
-  //   nodes.map((n) => n.services.proto.getLocalData(remoteHash))
-  // );
-
-  // /*****************
-  //  * Test Message Sending
-  //  *****************/
-  // const first: string = "Hello, this is a test message!";
-  // const second: string = "This is another message to be sent.";
-  // await client.services.proto.sendMessages(nodes[0].peerId, [first, second]);
-
-  // const fragments: Message[] = await nodes[0].services.proto.getInbox(nodes[0].peerId);
-  // console.log("Inbox fragments from node 0:", fragments);
-
-  // /*************/
-  // await new Promise((resolve) => setTimeout(resolve, 2500));
-  // console.log("Stopping application...");
-  // await client.stop();
-  // await Promise.all(nodes.map((node) => node.stop()));
-  // process.exit(0);
+    const message: string = await getTextInput("Enter a message to send: ");
+    console.log("Sending message:", message);
+    await client.services.proto.sendMessages(neighborPeerId, [message]);
+    console.log("Message sent successfully!");
+  }
 }
 
 main().catch((error) => {
