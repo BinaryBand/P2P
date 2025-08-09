@@ -102,8 +102,9 @@ async function main() {
   /*****************
    * Test Message Sending
    *****************/
-  const messageContent: string = "Hello, this is a test message!";
-  await client.services.proto.sendMessage(nodes[0].peerId, messageContent);
+  const first: string = "Hello, this is a test message!";
+  const second: string = "This is another message to be sent.";
+  await client.services.proto.sendMessages(nodes[0].peerId, [first, second]);
 
   const fragments = await nodes[0].services.proto.getInbox(nodes[0].peerId);
   console.log("Inbox fragments from node 0:", fragments);

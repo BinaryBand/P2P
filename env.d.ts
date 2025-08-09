@@ -113,3 +113,8 @@ interface StorageItem {
 type ProtocolEvents = Record<string, CustomEvent<Parcel<ReqData>>>;
 
 type AsyncIsh<T, U> = (evt: T) => void | U | Promise<void | U>;
+
+type MessageFragment = {
+  id: Uuid;
+  content: Base64;
+};

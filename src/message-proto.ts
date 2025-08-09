@@ -4,7 +4,7 @@ import { LRUCache } from "lru-cache";
 
 import SwarmProto, { SwarmEvents } from "./swarm-proto.js";
 import { bytesToBase64, decodeAddress, encodePeerId } from "./tools/typing.js";
-import { blake2b } from "./tools/cryptography.js";
+import { blake2b, reconstructShamirSecret, shamirSecretSharing } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
 export interface MessageEvents extends SwarmEvents {
@@ -21,6 +21,8 @@ export enum MessageTypes {
 export default class MessageProto<T extends MessageEvents> extends SwarmProto<T> {
   private static readonly METADATA_BUCKET_SIZE: number = 2048;
   private static readonly METADATA_SWARM_SIZE: number = 5;
+  private static readonly SHAMIR_SHARES: number = 5;
+  private static readonly SHAMIR_THRESHOLD: number = 3;
 
   protected metadata: LRUCache<Address, Set<Base64>> = new LRUCache({ max: MessageProto.METADATA_BUCKET_SIZE });
 
@@ -57,11 +59,11 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     }
   }
 
-  private async storeMetadata(recipient: PeerId, contentHash: Base64): Promise<void> {
+  private async storeMetadata(recipient: PeerId, contentHashes: Base64[]): Promise<void> {
     const owner: Address = encodePeerId(recipient);
     const ownerHash: Base64 = bytesToBase64(blake2b(owner));
     const nearestPeers: Address[] = await this.getNearestPeers(ownerHash, MessageProto.METADATA_SWARM_SIZE);
-    await Promise.all(nearestPeers.map((addr: Address) => this.storeMetadataRemotely(addr, owner, [contentHash])));
+    await Promise.all(nearestPeers.map((addr: Address) => this.storeMetadataRemotely(addr, owner, contentHashes)));
   }
 
   private getLocalMetadata(): Set<Base64> {
@@ -86,34 +88,29 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     }
   }
 
-  /**
-   * Sends a message to a specified recipient.
-   *
-   * This method stores the message content and its associated metadata.
-   *
-   * @param recipient - The peer identifier of the message recipient.
-   * @param content - The message content to be sent.
-   * @returns A promise that resolves when the message and metadata have been stored.
-   */
-  public async sendMessage(recipient: PeerId, content: string): Promise<void> {
-    const hash: Base64 = await this.storeData(content);
-    await this.storeMetadata(recipient, hash);
+  private async sendMessage(message: string) {
+    const fragments: Base64[] = await shamirSecretSharing(
+      message,
+      MessageProto.SHAMIR_SHARES,
+      MessageProto.SHAMIR_THRESHOLD
+    );
+
+    const id: Uuid = crypto.randomUUID();
+    const messageFragments: MessageFragment[] = fragments.map((content: Base64) => ({ id, content }));
+
+    return Promise.all(
+      messageFragments.map((fragment: MessageFragment) => {
+        const fragmentString: string = JSON.stringify(fragment);
+        return this.storeData(fragmentString);
+      })
+    );
   }
 
-  /**
-   * Retrieves the inbox messages for a given recipient.
-   *
-   * This method performs the following steps:
-   * 1. Encodes the recipient's peer ID to an address.
-   * 2. Hashes the address to obtain a unique owner hash.
-   * 3. Finds the nearest peers in the swarm to the owner hash.
-   * 4. Fetches metadata from the nearest peers to collect message fragment hashes.
-   * 5. Retrieves the actual message fragments using the collected hashes.
-   * 6. Filters out any null fragments and returns the list of messages.
-   *
-   * @param recipient - The peer ID of the recipient whose inbox is to be fetched.
-   * @returns A promise that resolves to an array of message fragments (strings) for the recipient.
-   */
+  public async sendMessages(recipient: PeerId, messages: string[]): Promise<void> {
+    const hashes: Base64[][] = await Promise.all(Array.from(messages).map(this.sendMessage.bind(this)));
+    await this.storeMetadata(recipient, hashes.flat());
+  }
+
   public async getInbox(recipient: PeerId): Promise<string[]> {
     const owner: Address = encodePeerId(recipient);
     const ownerHash: Base64 = bytesToBase64(blake2b(owner));
@@ -123,13 +120,26 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     const metadataArrays: Base64[][] = await Promise.all(metadataPromises);
     const metadataSet: Set<Base64> = new Set(metadataArrays.flat());
 
-    const fragments: (string | null)[] = await Promise.all(
-      Array.from(metadataSet).map((hash: Base64) => {
-        return this.fetchData(hash);
-      })
-    );
+    const rawFragments: (string | null)[] = await Promise.all(Array.from(metadataSet).map(this.fetchData.bind(this)));
+    const messageFragments: MessageFragment[] = rawFragments
+      .filter((fragment: string | null) => fragment !== null)
+      .map((fragment: string) => JSON.parse(fragment));
 
-    return fragments.filter((fragment: string | null) => fragment !== null);
+    const messageMap = messageFragments.reduce((map: Record<Uuid, MessageFragment[]>, fragment: MessageFragment) => {
+      if (!map[fragment.id]) map[fragment.id] = [];
+      map[fragment.id]!.push(fragment);
+      return map;
+    }, {});
+
+    const messages: string[] = [];
+    for (const [, fragments] of Object.entries(messageMap)) {
+      const reconstructed: string | undefined = await reconstructShamirSecret(fragments.map(({ content }) => content));
+      if (reconstructed !== undefined) {
+        messages.push(reconstructed);
+      }
+    }
+
+    return messages;
   }
 
   private async onStoreMetadataRequest({ detail }: CustomEvent<Parcel<SetMetadataRequest>>): Promise<void> {
