@@ -33,7 +33,12 @@ interface FetchResponse {
   type: import("./src/swarm-proto").SwarmTypes.FetchResponse;
 }
 
-type ResData = EmptyResponse | NearestPeersResponse | FetchResponse;
+interface GetMetadataResponse {
+  metadata: Base64[];
+  type: import("./src/message-proto").MessageTypes.GetMetadataResponse;
+}
+
+type ResData = EmptyResponse | NearestPeersResponse | FetchResponse | GetMetadataResponse;
 
 interface InitiationRequest {
   stamp: Base64;
@@ -64,7 +69,27 @@ interface FetchRequest {
   type: import("./src/swarm-proto").SwarmTypes.FetchRequest;
 }
 
-type ReqData = InitiationRequest | RequestPulse | NearestPeersRequest | StoreRequest | FetchRequest;
+interface SetMetadataRequest {
+  owner: Address;
+  metadata: Base64[];
+  stamp: Base64;
+  type: import("./src/message-proto").MessageTypes.SetMetadataRequest;
+}
+
+interface GetMetadataRequest {
+  address: Address;
+  stamp: Base64;
+  type: import("./src/message-proto").MessageTypes.GetMetadataRequest;
+}
+
+type ReqData =
+  | InitiationRequest
+  | RequestPulse
+  | NearestPeersRequest
+  | StoreRequest
+  | FetchRequest
+  | SetMetadataRequest
+  | GetMetadataRequest;
 
 interface Parcel<T extends ReqData | Return> {
   callbackId: Uuid;

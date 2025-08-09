@@ -5,6 +5,7 @@ import { BaseTypes } from "../base-proto.js";
 import { HandshakeTypes } from "../handshake-proto.js";
 import { SwarmTypes } from "../swarm-proto.js";
 import { assert } from "./utils.js";
+import { MessageTypes } from "../message-proto.js";
 
 export type Address = `${Formats.Base58},${string}`;
 export type Base64 = `${Formats.Base64},${string}`;
@@ -114,6 +115,32 @@ export function isRequest(payload: unknown): payload is ReqData {
         return true;
       }
       break;
+    case MessageTypes.SetMetadataRequest:
+      if (
+        "owner" in payload &&
+        isAddress(payload.owner) &&
+        "metadata" in payload &&
+        Array.isArray(payload.metadata) &&
+        payload.metadata.every(isBase64) &&
+        "stamp" in payload &&
+        isBase64(payload.stamp)
+      ) {
+        control = { owner: payload.owner, metadata: payload.metadata, stamp: payload.stamp, type: payload.type };
+        return true;
+      }
+      break;
+    case MessageTypes.GetMetadataRequest:
+      if (
+        "address" in payload &&
+        isAddress(payload.address) &&
+        "stamp" in payload &&
+        isBase64(payload.stamp) &&
+        payload.type === MessageTypes.GetMetadataRequest
+      ) {
+        control = { address: payload.address, stamp: payload.stamp, type: payload.type };
+        return true;
+      }
+      break;
   }
 
   return false;
@@ -162,6 +189,13 @@ function isResponse(response: unknown): response is ResData {
         return true;
       }
       break;
+    case MessageTypes.GetMetadataResponse:
+      return true;
+    // if ("metadata" in response && Array.isArray(response.metadata) && response.metadata.every(isBase64)) {
+    //   control = { metadata: response.metadata, type: response.type };
+    //   return true;
+    // }
+    // break;
   }
 
   return false;

@@ -80,6 +80,13 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     return bytesToBase64(expectedSig) === payload.stamp;
   }
 
+  /**
+   * Sends a pulse request to the specified peer and adds the peer to the internal list upon success.
+   * If the request fails, logs a warning and removes the peer from the internal list.
+   *
+   * @param peerId - The identifier of the peer to send the pulse request to.
+   * @returns A promise that resolves when the pulse request has been processed.
+   */
   protected async requestPulse(peerId: PeerId): Promise<void> {
     try {
       const request: RequestPulse = this.stampRequest({ type: HandshakeTypes.RequestPulse });
@@ -89,16 +96,6 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       console.warn(`Failed to verify pulse request from ${peerId}`);
       this.peers.delete(encodePeerId(peerId));
     }
-  }
-
-  protected async sendRequest<T extends ReqData, U extends ResData>(peerId: PeerId, payload: T): Promise<Return<U>> {
-    const address: Address = encodePeerId(peerId);
-
-    if (!this.peers.has(address) || this.peerIsStale(peerId)) {
-      await this.requestPulse(peerId);
-    }
-
-    return this.sendRequest(peerId, payload);
   }
 
   private addPeer(peerId: PeerId): void {

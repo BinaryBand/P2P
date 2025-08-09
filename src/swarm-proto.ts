@@ -48,13 +48,13 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return distances.slice(0, n);
   }
 
-  private getNearestLocals(hash: Base64, n: number): Address[] {
+  private getNearestLocalPeers(hash: Base64, n: number): Address[] {
     return this.getNearestLocalPairs(hash, n).map(({ peer }) => peer);
   }
 
   private async getNearestRemotes(address: Address, hash: Base64, n: number): Promise<Address[]> {
     if (this.address === address) {
-      return this.getNearestLocals(hash, n);
+      return this.getNearestLocalPeers(hash, n);
     }
 
     try {
@@ -92,7 +92,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
    * @param n - The maximum number of nearest peers to return. Defaults to 3.
    * @returns A promise that resolves to an array of the nearest peer addresses.
    */
-  public async getNearestPeers(query: string, n: number = SwarmProto.SWARM_SIZE): Promise<Address[]> {
+  protected async getNearestPeers(query: string, n: number = SwarmProto.SWARM_SIZE): Promise<Address[]> {
     const hash: Base64 = SwarmProto.hashFromData(query);
     let peers: PeerDistancePair[] = this.getNearestLocalPairs(hash, n);
 
@@ -199,7 +199,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
    * @returns A promise that resolves to the valid data fragment as a string, or `null` if no valid fragment is found.
    */
   public async fetchData(hash: Base64): Promise<string | null> {
-    const nearestPeers: Address[] = this.getNearestLocals(hash, SwarmProto.SWARM_SIZE);
+    const nearestPeers: Address[] = this.getNearestLocalPeers(hash, SwarmProto.SWARM_SIZE);
     const responses = await Promise.all(nearestPeers.map((peer: Address) => this.getRemoteStorage(peer, hash)));
 
     const filteredResponses: string[] = responses
@@ -218,9 +218,19 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     );
   }
 
+  /**
+   * Audits the swarm for the given data by verifying its presence across the nearest peers.
+   *
+   * This method computes the hash of the provided data, identifies the nearest local peers,
+   * retrieves the corresponding storage values from those peers, and then attempts to repair
+   * the swarm if any discrepancies are found.
+   *
+   * @param data - The data to audit within the swarm.
+   * @returns A promise that resolves when the audit and any necessary repairs are complete.
+   */
   public async auditSwarm(data: string): Promise<void> {
     const hash: Base64 = SwarmProto.hashFromData(data);
-    const nearestPeers: Address[] = this.getNearestLocals(hash, SwarmProto.SWARM_SIZE);
+    const nearestPeers: Address[] = this.getNearestLocalPeers(hash, SwarmProto.SWARM_SIZE);
 
     const storagePairs: [Address, string | null][] = await Promise.all(
       nearestPeers.map(async (peer: Address) => [peer, await this.getRemoteStorage(peer, hash)])
@@ -262,7 +272,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
   private onPeersRequest({ detail }: CustomEvent<Parcel<NearestPeersRequest>>): NearestPeersResponse {
     assert(this.verifyStamp(detail.payload), "Invalid stamp");
-    const peers: Address[] = this.getNearestLocals(detail.payload.hash, detail.payload.n);
+    const peers: Address[] = this.getNearestLocalPeers(detail.payload.hash, detail.payload.n);
     return { peers, type: SwarmTypes.NearestPeersResponse };
   }
 

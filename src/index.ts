@@ -12,9 +12,9 @@ import { peerIdFromPrivateKey } from "@libp2p/peer-id";
 import { PeerId, PrivateKey } from "@libp2p/interface";
 import { keys } from "@libp2p/crypto";
 
-import { encodePeerId } from "./tools/typing.js";
+// import { encodePeerId } from "./tools/typing.js";
 // import { assert } from "./tools/utils.js";
-import SwarmProto from "./swarm-proto.js";
+import MessageProto from "./message-proto.js";
 
 const stockOptions = {
   connectionEncrypters: [noise()],
@@ -34,7 +34,7 @@ function getClientOptions(addresses: string[], privateKey?: PrivateKey) {
 
 function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?: string) {
   const options = getClientOptions(addresses, privateKey);
-  return createLibp2p({ ...options, services: { ...options.services, proto: SwarmProto.Swarm(passphrase) } });
+  return createLibp2p({ ...options, services: { ...options.services, proto: MessageProto.Message(passphrase) } });
 }
 
 async function main() {
@@ -66,13 +66,6 @@ async function main() {
   await new Promise((resolve) => setTimeout(resolve, 5000));
 
   /*****************
-   * Test Peer Discovery
-   *****************/
-  const targetAddress: Address = encodePeerId(nodes[2].peerId);
-  const nearestPeers: Address[] = await client.services.proto.getNearestPeers(targetAddress);
-  console.log("Nearest peers found:", nearestPeers);
-
-  /*****************
    * Test Local Data Storage
    *****************/
   const mockData: string = "This is test data to be stored locally.";
@@ -102,9 +95,18 @@ async function main() {
    *****************/
   await client.services.proto.auditSwarm(remoteData);
   console.log(
-    "Data retrieved from nodes:",
-    nodes.map((node) => node.services.proto.getLocalData(remoteHash))
+    "Data from nodes:",
+    nodes.map((n) => n.services.proto.getLocalData(remoteHash))
   );
+
+  /*****************
+   * Test Message Sending
+   *****************/
+  const messageContent: string = "Hello, this is a test message!";
+  await client.services.proto.sendMessage(nodes[0].peerId, messageContent);
+
+  const fragments = await nodes[0].services.proto.getInbox(nodes[0].peerId);
+  console.log("Inbox fragments from node 0:", fragments);
 
   // /*************/
   // await new Promise((resolve) => setTimeout(resolve, 2500));
