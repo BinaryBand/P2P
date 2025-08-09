@@ -167,6 +167,12 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
   private async onStoreMetadataRequest({ detail }: CustomEvent<Parcel<SetMetadataRequest>>): Promise<void> {
     console.info(`${this.peerId}: Received metadata store request from ${detail.sender}`);
     this.storeMetadataLocally(detail.payload.metadata);
+
+    if (detail.payload.owner === this.address) {
+      console.log(`${this.peerId}: Stored metadata locally for owner ${detail.payload.owner}`);
+      const messages = await this.getInbox(this.peerId);
+      console.log(messages);
+    }
   }
 
   private async onGetMetadataRequest({

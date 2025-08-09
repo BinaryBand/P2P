@@ -3,22 +3,32 @@ import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { webRTCDirect } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
 import { Identify, identify } from "@libp2p/identify";
+import { bootstrap } from "@libp2p/bootstrap";
+import { kadDHT } from "@libp2p/kad-dht";
+import { ping } from "@libp2p/ping";
 import { mdns } from "@libp2p/mdns";
 
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 
-import { peerIdFromPrivateKey } from "@libp2p/peer-id";
+import { peerIdFromPrivateKey, peerIdFromString } from "@libp2p/peer-id";
 import { Libp2p, PeerId, PrivateKey } from "@libp2p/interface";
 import { keys } from "@libp2p/crypto";
 
-// import { encodePeerId } from "./tools/typing.js";
-// import { assert } from "./tools/utils.js";
+import readline from "readline";
+
 import MessageProto, { MessageEvents } from "./message-proto.js";
+import { blake3 } from "./tools/cryptography.js";
+
+const bootstrapNodes: string[] = [
+  "/ip4/104.131.131.82/tcp/4001/ipfs/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+  "/dnsaddr/bootstrap.libp2p.io/ipfs/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+  "/dnsaddr/bootstrap.libp2p.io/ipfs/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+];
 
 const stockOptions = {
   connectionEncrypters: [noise()],
-  peerDiscovery: [mdns()],
+  peerDiscovery: [mdns(), bootstrap({ list: bootstrapNodes })],
   streamMuxers: [yamux()],
   transports: [circuitRelayTransport(), webRTCDirect(), webSockets()],
 };
@@ -28,7 +38,7 @@ function getClientOptions(addresses: string[], privateKey?: PrivateKey) {
     ...stockOptions,
     addresses: { listen: [...addresses, "/p2p-circuit", "/webrtc"] },
     privateKey,
-    services: { identify: identify() },
+    services: { dht: kadDHT(), identify: identify(), ping: ping() },
   };
 }
 
@@ -37,16 +47,36 @@ function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?:
   return createLibp2p({ ...options, services: { ...options.services, proto: MessageProto.Message(passphrase) } });
 }
 
+const rl: readline.Interface = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
+
+function getTextInput(prompt: string): Promise<string> {
+  return new Promise((resolve) => {
+    rl.question(prompt, resolve);
+  });
+}
+
+async function getPrivateKeyFromSeed(password: string): Promise<PrivateKey> {
+  const seed: Uint8Array = blake3(password);
+  return await keys.generateKeyPairFromSeed("Ed25519", seed);
+}
+
 async function main() {
   console.log("Starting application...");
 
-  // const seed: Uint8Array = new Uint8Array(32);
-  // seed.set(Buffer.from("AppleMango"));
-  // const privateKey: PrivateKey = await keys.generateKeyPairFromSeed("Ed25519", seed);
-  // const peerId: PeerId = peerIdFromPrivateKey(privateKey);
-  // console.log("Peer ID:", peerId.toString());
+  // Prompt the user for input
+  const seedPassword: string = await getTextInput("Enter your name: ");
+  const privateKey: PrivateKey = await getPrivateKeyFromSeed(seedPassword);
+  const peerId: PeerId = peerIdFromPrivateKey(privateKey);
+  console.log("Peer ID:", peerId.toString());
+  await getTextInput("Press Enter to continue...");
 
-  const client = await getNewClient(["/ip4/0.0.0.0/udp/0/webrtc-direct"]);
+  const client: Libp2p<{ proto: MessageProto<MessageEvents>; identify: Identify }> = await getNewClient(
+    ["/ip4/0.0.0.0/udp/0/webrtc-direct"],
+    privateKey
+  );
   // const nodes: Libp2p<{ proto: MessageProto<MessageEvents>; identify: Identify }>[] = await Promise.all([
   //   // getNewClient(["/ip4/0.0.0.0/udp/5000/webrtc-direct"]),
   //   // getNewClient(["/ip4/0.0.0.0/udp/5001/webrtc-direct"]),
@@ -56,9 +86,14 @@ async function main() {
 
   await client.start();
   // await Promise.all(nodes.map((node) => node.start()));
-  // await new Promise((resolve) => setTimeout(resolve, 5000));
+  await new Promise((resolve) => setTimeout(resolve, 5000));
 
   console.log("Client started with ID:", client.peerId.toString());
+
+  const bootstrapPeer = peerIdFromString("12D3KooWNUG46aTGP9aKo5kJF8KQtjah74qSkH4YQqaqEHVWVktz");
+  if (!bootstrapPeer.equals(client.peerId)) {
+    await client.dialProtocol(bootstrapPeer, MessageProto.PROTOCOL);
+  }
 
   while (client.services.proto.getPeers().length < 2) {
     console.log(client.services.proto.getPeers().length, "peers connected");
@@ -66,6 +101,15 @@ async function main() {
   }
   console.log("Bootstrapped with peers:", client.services.proto.getPeers().length);
   await new Promise((resolve) => setTimeout(resolve, 5000));
+
+  const neighbor: string = await getTextInput("Who do you want to connect to? (Enter peer ID): ");
+  const neighborPeerId: PeerId = peerIdFromString(neighbor);
+  console.log("Connecting to neighbor:", neighborPeerId.toString());
+
+  const message: string = await getTextInput("Enter a message to send: ");
+  console.log("Sending message:", message);
+  await client.services.proto.sendMessages(neighborPeerId, [message]);
+  console.log("Message sent successfully!");
 
   // /*****************
   //  * Test Local Data Storage

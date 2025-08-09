@@ -125,6 +125,10 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   }
 
   private async initiateHandshake({ detail }: CustomEvent<IdentifyResult>): Promise<void> {
+    if (!detail.protocols.includes(BaseProto.PROTOCOL)) {
+      return;
+    }
+
     console.info(`${this.peerId}: Initiating handshake with peer: ${detail.peerId.toString()}`);
 
     try {
