@@ -79,12 +79,14 @@ export function isMessage(message: unknown): message is Message {
     message !== undefined &&
     message !== null &&
     typeof message === "object" &&
+    "sender" in message &&
+    isAddress(message.sender) &&
     "text" in message &&
     isBase64(message.text) &&
     "timestamp" in message &&
     typeof message.timestamp === "number"
   ) {
-    control = { text: message.text, timestamp: message.timestamp };
+    control = { sender: message.sender, text: message.text, timestamp: message.timestamp };
     return true;
   }
   return false;
@@ -137,7 +139,7 @@ export function isRequest(payload: unknown): payload is ReqData {
       }
       break;
     }
-    case SwarmTypes.NearestPeersRequest:
+    case HandshakeTypes.NearestPeersRequest:
       if (
         "n" in payload &&
         typeof payload.n === "number" &&
@@ -224,7 +226,7 @@ function isResponse(response: unknown): response is ResData {
     case BaseTypes.EmptyResponse:
       control = { type: response.type };
       return true;
-    case SwarmTypes.NearestPeersResponse:
+    case HandshakeTypes.NearestPeersResponse:
       if ("peers" in response && Array.isArray(response.peers) && response.peers.every(isAddress)) {
         control = { peers: response.peers, type: response.type };
         return true;

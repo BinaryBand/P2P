@@ -80,12 +80,16 @@ async function main() {
 
   await client.start();
   await new Promise((resolve) => setTimeout(resolve, 5000));
-
   console.log("Client started with ID:", client.peerId.toString());
 
-  const bootstrapPeer = peerIdFromString("12D3KooWNUG46aTGP9aKo5kJF8KQtjah74qSkH4YQqaqEHVWVktz");
-  if (!bootstrapPeer.equals(client.peerId)) {
-    await client.dialProtocol(bootstrapPeer, MessageProto.PROTOCOL, { signal: AbortSignal.timeout(500_000) });
+  const bootstrapPeerId: PeerId = peerIdFromString("12D3KooWNUG46aTGP9aKo5kJF8KQtjah74qSkH4YQqaqEHVWVktz");
+  if (!client.peerId.equals(bootstrapPeerId)) {
+    console.log("Bootstrapping with peer:", bootstrapPeerId.toString());
+    const bootstrapPeer = await client.peerRouting.findPeer(bootstrapPeerId);
+
+    await client.dialProtocol(bootstrapPeer.multiaddrs, MessageProto.PROTOCOL, {
+      signal: AbortSignal.timeout(500_000),
+    });
   }
 
   while (client.services.proto.getPeers().length < 2) {
@@ -96,14 +100,45 @@ async function main() {
   await new Promise((resolve) => setTimeout(resolve, 5000));
 
   while (true) {
-    const neighbor: string = await getTextInput("Who do you want to connect to? (Enter peer ID): ");
-    const neighborPeerId: PeerId = peerIdFromString(neighbor);
-    console.log("Connecting to neighbor:", neighborPeerId.toString());
+    try {
+      console.log("Select an action:");
+      console.log("\t1. Send a message (send)");
+      console.log("\t2. View inbox (inbox)");
+      console.log("\t3. View metadata cache (cache)");
+      console.log("\t4. Exit (exit)");
+      console.log();
 
-    const message: string = await getTextInput("Enter a message to send: ");
-    console.log("Sending message:", message);
-    await client.services.proto.sendMessages(neighborPeerId, [message]);
-    console.log("Message sent successfully!");
+      const action: string = await getTextInput("Enter 'send' to send a message, 'exit' to quit: ");
+      switch (action.toLowerCase()) {
+        case "1":
+        case "send":
+          const recipient: string = await getTextInput("Enter recipient peer ID: ");
+          const message: string = await getTextInput("Enter your message: ");
+          const recipientPeerId: PeerId = peerIdFromString(recipient);
+          console.log("Sending message to:", recipientPeerId.toString());
+          await client.services.proto.sendMessages(recipientPeerId, [message]);
+          console.log("Message sent successfully!");
+          break;
+        case "2":
+        case "inbox":
+          const inbox: Message[] = await client.services.proto.getInbox(client.peerId);
+          console.log("Inbox messages:", inbox);
+          break;
+        case "3":
+        case "cache":
+          console.log("Metadata cache:", client.services.proto.logCache());
+          break;
+        case "4":
+        case "exit":
+          console.log("Exiting...");
+          rl.close();
+          await client.stop();
+          return;
+        default:
+          console.log("Invalid action. Please try again.");
+          break;
+      }
+    } catch {}
   }
 }
 

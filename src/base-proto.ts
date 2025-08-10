@@ -7,7 +7,7 @@ import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
 import { decode, bytesToBase64, isParcel, isReturn, isRequest, encodePeerId, decodeAddress } from "./tools/typing.js";
-import { blake3, totp } from "./tools/cryptography.js";
+import { totp } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
 export enum BaseTypes {
@@ -19,8 +19,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   public static readonly PROTOCOL: string = "/secret-handshake/proto/0.5.2";
   private static readonly MAX_CALLBACKS: number = 64; // max callbacks to keep in memory
   private static readonly CALLBACK_TIMEOUT: number = 30_000; // 30 seconds until callback request expires
-  private static readonly RATE_LIMIT: number = 50; // max requests per 30 seconds
-  private static readonly DUPLICATE_THRESHOLD: number = 8; // max duplicate messages before rejection
+  private static readonly RATE_LIMIT: number = 300; // max requests per 30 seconds
 
   protected readonly sk: Uint8Array;
   protected get pk(): Uint8Array {
@@ -39,7 +38,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     max: BaseProto.MAX_CALLBACKS,
     ttl: BaseProto.CALLBACK_TIMEOUT,
   });
-  private requestCache = new LRUCache<string, number>({ max: 2048, ttl: BaseProto.CALLBACK_TIMEOUT });
+  private rateLimitCache = new LRUCache<Base64, number>({ max: 1024, ttl: BaseProto.CALLBACK_TIMEOUT });
 
   constructor(components: Components) {
     super();
@@ -47,13 +46,6 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     this.connectionManager = components.connectionManager;
     this.peerId = components.peerId;
     this.registrar = components.registrar;
-  }
-
-  private async getConnection(peerId: PeerId): Promise<Connection> {
-    const connections: Connection[] = this.connectionManager
-      .getConnections(peerId)
-      .filter(({ direction }) => direction === "outbound");
-    return connections[0] ?? (await this.connectionManager.openConnection(peerId));
   }
 
   private static byteArrayToString(byteArray: Uint8Array[]): string {
@@ -78,7 +70,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
 
   private async sendParcelNoCallback<T extends ReqData | Return>(parcel: Parcel<T>): Promise<void> {
     const peerId: PeerId = decodeAddress(parcel.receiver);
-    const connection: Connection = await this.getConnection(peerId);
+
+    const connection: Connection = await this.connectionManager.openConnection(peerId);
     const outgoing: Stream = await connection.newStream(BaseProto.PROTOCOL);
     try {
       const parcelString: string = JSON.stringify(parcel);
@@ -131,16 +124,9 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   private exceedsRateLimit(peerId: PeerId): boolean {
     const timedFingerprint: Uint8Array = totp(peerId.toCID().bytes);
     const key: Base64 = bytesToBase64(timedFingerprint);
-    const rateCount: number = (this.requestCache.get(key) ?? 0) + 1;
-    this.requestCache.set(key, rateCount);
+    const rateCount: number = (this.rateLimitCache.get(key) ?? 0) + 1;
+    this.rateLimitCache.set(key, rateCount);
     return BaseProto.RATE_LIMIT < rateCount;
-  }
-
-  private countDuplicateMessages(rawMessage: string): number {
-    const fingerprint: Base64 = bytesToBase64(blake3(rawMessage));
-    const messageCount: number = (this.requestCache.get(fingerprint) ?? 0) + 1;
-    this.requestCache.set(fingerprint, messageCount);
-    return messageCount;
   }
 
   private static parseParcel<T extends ReqData>(rawMessage: string): Parcel<T> | null {
@@ -172,10 +158,6 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
       // Check for rate limit violations
       const errorMessage: string = `Rate limit exceeded for peer: ${connection.remotePeer}`;
       assert(!this.exceedsRateLimit(connection.remotePeer), errorMessage);
-
-      // Check for excessive duplicate messages
-      const messageCount: number = this.countDuplicateMessages(rawMessage);
-      assert(messageCount < BaseProto.DUPLICATE_THRESHOLD, `Excessive duplicates detected: ${rawMessage}`);
 
       const detail: Parcel<ReqData | Return> | null = BaseProto.parseParcel(rawMessage);
       assert(detail !== null, `Invalid parcel received: ${rawMessage}`);
@@ -244,6 +226,5 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   public async stop(): Promise<void> {
     await this.registrar.unhandle(BaseProto.PROTOCOL);
     this.callbackQueue.clear();
-    this.requestCache.clear();
   }
 }

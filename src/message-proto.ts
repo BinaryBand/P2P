@@ -3,7 +3,7 @@ import { PeerId } from "@libp2p/interface";
 import { LRUCache } from "lru-cache";
 
 import SwarmProto, { SwarmEvents } from "./swarm-proto.js";
-import { bytesToBase64, decodeAddress, encodePeerId, isMessage, isMessageFragment } from "./tools/typing.js";
+import { bytesToBase64, decodeAddress, encodePeerId, isMessageFragment } from "./tools/typing.js";
 import { blake3, reconstructShamirSecret, shamirSecretSharing } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
@@ -34,17 +34,21 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     return (params: Components) => new MessageProto(params, passphrase);
   }
 
-  private storeMetadataLocally(metadata: Base64[]): void {
-    const existingHashes: Set<Base64> = this.metadata.get(this.address) || new Set();
+  public logCache(): void {
+    console.log("Metadata Cache:", JSON.stringify(this.metadata.dump(), null, 2));
+  }
+
+  private storeMetadataLocally(owner: Address, metadata: Base64[]): void {
+    const existingHashes: Set<Base64> = this.metadata.get(owner) || new Set();
     for (const hash of metadata) {
       existingHashes.add(hash);
     }
-    this.metadata.set(this.address, existingHashes);
+    this.metadata.set(owner, existingHashes);
   }
 
   private async storeMetadataRemotely(holder: Address, owner: Address, metadata: Base64[]): Promise<boolean> {
     if (this.address === holder) {
-      this.storeMetadataLocally(metadata);
+      this.storeMetadataLocally(owner, metadata);
       return true;
     }
 
@@ -70,26 +74,25 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     return this.metadata.get(this.address) || new Set();
   }
 
-  private async getRemoteMetadata(address: Address): Promise<Base64[]> {
-    if (this.address === address) {
+  private async getRemoteMetadata(holder: PeerId, owner: Address): Promise<Base64[]> {
+    if (holder.equals(this.peerId)) {
       return Array.from(this.getLocalMetadata());
     }
 
     try {
-      const peerId: PeerId = decodeAddress(address);
-      const request: GetMetadataRequest = this.stampRequest({ address, type: MessageTypes.GetMetadataRequest });
-      const response: Return<GetMetadataResponse> = await this.sendRequest(peerId, request);
-      assert(response.success, `Failed to find nearest peers for ${peerId}`);
+      const request: GetMetadataRequest = this.stampRequest({ address: owner, type: MessageTypes.GetMetadataRequest });
+      const response: Return<GetMetadataResponse> = await this.sendRequest(holder, request);
+      assert(response.success, `Failed to find nearest peers for ${owner}`);
 
       return response.data.metadata || [];
     } catch (err) {
-      console.warn(`Error getting remote storage from ${address}:`, err);
+      console.warn(`Error getting remote storage of ${owner} from ${holder}:`, err);
       return [];
     }
   }
 
-  private async sendMessage(text: string) {
-    const message: Message = { text, timestamp: Date.now() };
+  private async sendMessage(text: string): Promise<Base64[]> {
+    const message: Message = { sender: this.address, text, timestamp: Date.now() };
     const messageString: string = JSON.stringify(message);
 
     // Split the message into Shamir shares
@@ -124,13 +127,15 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     return undefined;
   }
 
-  public async getInbox(recipient: PeerId): Promise<Message[]> {
-    const owner: Address = encodePeerId(recipient);
-    const ownerHash: Base64 = bytesToBase64(blake3(owner));
+  public async getInbox(peerId: PeerId): Promise<Message[]> {
+    const recipient: Address = encodePeerId(peerId);
+    const ownerHash: Base64 = bytesToBase64(blake3(recipient));
     const nearestPeers: Address[] = await this.getNearestPeers(ownerHash, MessageProto.METADATA_SWARM_SIZE);
 
     // Fetch metadata from nearest peers
-    const metadataPromises: Promise<Base64[]>[] = nearestPeers.map(this.getRemoteMetadata.bind(this));
+    const metadataPromises: Promise<Base64[]>[] = nearestPeers.map((addr: Address) =>
+      this.getRemoteMetadata(peerId, addr)
+    );
     const metadataArrays: Base64[][] = await Promise.all(metadataPromises);
     const metadataSet: Set<Base64> = new Set(metadataArrays.flat());
 
@@ -165,19 +170,17 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
   }
 
   private async onStoreMetadataRequest({ detail }: CustomEvent<Parcel<SetMetadataRequest>>): Promise<void> {
+    assert(this.verifyStamp(detail.payload), "Invalid stamp");
     console.info(`${this.peerId}: Received metadata store request from ${detail.sender}`);
-    this.storeMetadataLocally(detail.payload.metadata);
-
-    if (detail.payload.owner === this.address) {
-      console.log(`${this.peerId}: Stored metadata locally for owner ${detail.payload.owner}`);
-      const messages = await this.getInbox(this.peerId);
-      console.log(messages);
-    }
+    this.storeMetadataLocally(detail.payload.owner, detail.payload.metadata);
   }
 
   private async onGetMetadataRequest({
     detail,
   }: CustomEvent<Parcel<GetMetadataRequest>>): Promise<GetMetadataResponse> {
+    assert(this.verifyStamp(detail.payload), "Invalid stamp");
+    assert(detail.payload.address === detail.sender, "Address mismatch in metadata request");
+
     console.info(`${this.peerId}: Received metadata get request from ${detail.sender}`);
     const address: Set<Base64> | null = this.metadata.get(detail.payload.address) ?? null;
     return { metadata: [...(address || [])], type: MessageTypes.GetMetadataResponse };

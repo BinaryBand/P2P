@@ -25,7 +25,7 @@ interface EmptyResponse {
 
 interface NearestPeersResponse {
   peers: Address[];
-  type: import("./src/swarm-proto").SwarmTypes.NearestPeersResponse;
+  type: import("./src/handshake-proto").HandshakeTypes.NearestPeersResponse;
 }
 
 interface FetchResponse {
@@ -54,7 +54,7 @@ interface NearestPeersRequest {
   n: number;
   hash: Base64;
   stamp: Base64;
-  type: import("./src/swarm-proto").SwarmTypes.NearestPeersRequest;
+  type: import("./src/handshake-proto").HandshakeTypes.NearestPeersRequest;
 }
 
 interface StoreRequest {
@@ -116,6 +116,7 @@ type ProtocolEvents = Record<string, CustomEvent<Parcel<ReqData>>>;
 type AsyncIsh<T, U> = (evt: T) => void | U | Promise<void | U>;
 
 type Message = {
+  sender: Address;
   text: string;
   timestamp: number;
 };

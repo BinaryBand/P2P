@@ -9,14 +9,14 @@ import { blake3 } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
 export interface SwarmEvents extends HandshakeEvents {
-  [SwarmTypes.NearestPeersRequest]: CustomEvent<Parcel<NearestPeersRequest>>;
+  // [SwarmTypes.NearestPeersRequest]: CustomEvent<Parcel<NearestPeersRequest>>;
   [SwarmTypes.StoreRequest]: CustomEvent<Parcel<StoreRequest>>;
   [SwarmTypes.FetchRequest]: CustomEvent<Parcel<FetchRequest>>;
 }
 
 export enum SwarmTypes {
-  NearestPeersRequest = "swarm:nearest-peers-request",
-  NearestPeersResponse = "swarm:nearest-peers-response",
+  // NearestPeersRequest = "swarm:nearest-peers-request",
+  // NearestPeersResponse = "swarm:nearest-peers-response",
   StoreRequest = "swarm:store-request",
   StoreResponse = "swarm:store-response",
   FetchRequest = "swarm:fetch-request",
@@ -24,7 +24,7 @@ export enum SwarmTypes {
 }
 
 export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T> {
-  private static readonly MAX_RECURSION_DEPTH: number = 5;
+  // private static readonly MAX_RECURSION_DEPTH: number = 5;
   private static readonly MAX_STORAGE_SIZE: number = 4096;
   private static readonly STORAGE_AUDIT_INTERVAL: number = 60_000; // 1 minute
   private static readonly STORAGE_FRESHNESS_THRESHOLD: number = 180_000; // 3 minutes
@@ -42,75 +42,75 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return (params: Components) => new SwarmProto(params, passphrase);
   }
 
-  private getNearestLocalPairs(hash: Base64, n: number): PeerDistancePair[] {
-    const candidates: Address[] = [this.address, ...this.peers.keys()];
-    const distances: PeerDistancePair[] = orderPeers(hash, candidates);
-    return distances.slice(0, n);
-  }
+  // private getNearestLocalPairs(hash: Base64, n: number): PeerDistancePair[] {
+  //   const candidates: Address[] = [this.address, ...this.peers.keys()];
+  //   const distances: PeerDistancePair[] = orderPeers(hash, candidates);
+  //   return distances.slice(0, n);
+  // }
 
-  private getNearestLocalPeers(hash: Base64, n: number): Address[] {
-    return this.getNearestLocalPairs(hash, n).map(({ peer }) => peer);
-  }
+  // private getNearestLocalPeers(hash: Base64, n: number): Address[] {
+  //   return this.getNearestLocalPairs(hash, n).map(({ peer }) => peer);
+  // }
 
-  private async getNearestRemotes(address: Address, hash: Base64, n: number): Promise<Address[]> {
-    if (this.address === address) {
-      return this.getNearestLocalPeers(hash, n);
-    }
+  // private async getNearestRemotes(address: Address, hash: Base64, n: number): Promise<Address[]> {
+  //   if (this.address === address) {
+  //     return this.getNearestLocalPeers(hash, n);
+  //   }
 
-    try {
-      const peerId: PeerId = decodeAddress(address);
-      const request: NearestPeersRequest = this.stampRequest({ n, hash, type: SwarmTypes.NearestPeersRequest });
-      const response: Return<NearestPeersResponse> = await this.sendRequest(peerId, request);
-      assert(response.success, `Failed to find nearest peers for ${peerId}`);
+  //   try {
+  //     const peerId: PeerId = decodeAddress(address);
+  //     const request: NearestPeersRequest = this.stampRequest({ n, hash, type: SwarmTypes.NearestPeersRequest });
+  //     const response: Return<NearestPeersResponse> = await this.sendRequest(peerId, request);
+  //     assert(response.success, `Failed to find nearest peers for ${peerId}`);
 
-      return response.data.peers;
-    } catch (err) {
-      console.warn(`Error getting nearest peers from ${address}:`, err);
-      return [];
-    }
-  }
+  //     return response.data.peers;
+  //   } catch (err) {
+  //     console.warn(`Error getting nearest peers from ${address}:`, err);
+  //     return [];
+  //   }
+  // }
 
-  private static hashFromData(data: string): Base64 {
-    const key: Uint8Array = blake3(data);
-    return bytesToBase64(key);
-  }
+  // private static hashFromData(data: string): Base64 {
+  //   const key: Uint8Array = blake3(data);
+  //   return bytesToBase64(key);
+  // }
 
   private static verifyDataFragment(hash: Base64, fragment: string | null): boolean {
     if (!fragment) return false;
-    const expectedHash: Base64 = SwarmProto.hashFromData(fragment);
+    const expectedHash: Base64 = HandshakeProto.hashFromData(fragment);
     return expectedHash === hash;
   }
 
-  /**
-   * Finds and returns the addresses of the nearest peers to a given query.
-   *
-   * This method first retrieves the nearest local peers, then iteratively queries those peers
-   * for their nearest peers, up to a maximum recursion depth defined by `SwarmProto.MAX_RECURSION_DEPTH`.
-   * The process stops early if no closer peers are found in an iteration.
-   *
-   * @param query - The identifier or key to search nearest peers for.
-   * @param n - The maximum number of nearest peers to return. Defaults to 3.
-   * @returns A promise that resolves to an array of the nearest peer addresses.
-   */
-  protected async getNearestPeers(query: string, n: number = SwarmProto.SWARM_SIZE): Promise<Address[]> {
-    const hash: Base64 = SwarmProto.hashFromData(query);
-    let peers: PeerDistancePair[] = this.getNearestLocalPairs(hash, n);
+  // /**
+  //  * Finds and returns the addresses of the nearest peers to a given query.
+  //  *
+  //  * This method first retrieves the nearest local peers, then iteratively queries those peers
+  //  * for their nearest peers, up to a maximum recursion depth defined by `SwarmProto.MAX_RECURSION_DEPTH`.
+  //  * The process stops early if no closer peers are found in an iteration.
+  //  *
+  //  * @param query - The identifier or key to search nearest peers for.
+  //  * @param n - The maximum number of nearest peers to return. Defaults to 3.
+  //  * @returns A promise that resolves to an array of the nearest peer addresses.
+  //  */
+  // protected async getNearestPeers(query: string, n: number = SwarmProto.SWARM_SIZE): Promise<Address[]> {
+  //   const hash: Base64 = SwarmProto.hashFromData(query);
+  //   let peers: PeerDistancePair[] = this.getNearestLocalPairs(hash, n);
 
-    let prevMinDistance: number = peers[0]?.distance ?? Infinity;
-    for (let i: number = 0; i < SwarmProto.MAX_RECURSION_DEPTH; i++) {
-      const wideNet = await Promise.all(peers.map(({ peer }) => this.getNearestRemotes(peer, hash, n)));
-      peers = orderPeers(hash, wideNet.flat());
+  //   let prevMinDistance: number = peers[0]?.distance ?? Infinity;
+  //   for (let i: number = 0; i < SwarmProto.MAX_RECURSION_DEPTH; i++) {
+  //     const wideNet = await Promise.all(peers.map(({ peer }) => this.getNearestRemotes(peer, hash, n)));
+  //     peers = orderPeers(hash, wideNet.flat());
 
-      const currMinDistance: number = peers[0]?.distance ?? prevMinDistance;
-      if (currMinDistance >= prevMinDistance || peers.length === 0) {
-        break;
-      }
+  //     const currMinDistance: number = peers[0]?.distance ?? prevMinDistance;
+  //     if (currMinDistance >= prevMinDistance || peers.length === 0) {
+  //       break;
+  //     }
 
-      prevMinDistance = currMinDistance;
-    }
+  //     prevMinDistance = currMinDistance;
+  //   }
 
-    return peers.map((pair: PeerDistancePair) => pair.peer).slice(0, n);
-  }
+  //   return peers.map((pair: PeerDistancePair) => pair.peer).slice(0, n);
+  // }
 
   private async storeRemotely(address: Address, data: string): Promise<boolean> {
     if (this.address === address) {
@@ -270,11 +270,11 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     await Promise.all([...staleData, ...freshDataToAudit].map(this.auditSwarm.bind(this)));
   }
 
-  private onPeersRequest({ detail }: CustomEvent<Parcel<NearestPeersRequest>>): NearestPeersResponse {
-    assert(this.verifyStamp(detail.payload), "Invalid stamp");
-    const peers: Address[] = this.getNearestLocalPeers(detail.payload.hash, detail.payload.n);
-    return { peers, type: SwarmTypes.NearestPeersResponse };
-  }
+  // private onPeersRequest({ detail }: CustomEvent<Parcel<NearestPeersRequest>>): NearestPeersResponse {
+  //   assert(this.verifyStamp(detail.payload), "Invalid stamp");
+  //   const peers: Address[] = this.getNearestLocalPeers(detail.payload.hash, detail.payload.n);
+  //   return { peers, type: SwarmTypes.NearestPeersResponse };
+  // }
 
   private onStoreRequest({ detail }: CustomEvent<Parcel<StoreRequest>>): void {
     assert(this.verifyStamp(detail.payload), "Invalid stamp");
@@ -289,7 +289,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
   public async start(): Promise<void> {
     await super.start();
-    this.addEventListener(SwarmTypes.NearestPeersRequest, this.onPeersRequest.bind(this));
+    // this.addEventListener(SwarmTypes.NearestPeersRequest, this.onPeersRequest.bind(this));
     this.addEventListener(SwarmTypes.StoreRequest, this.onStoreRequest.bind(this));
     this.addEventListener(SwarmTypes.FetchRequest, this.onFetchRequest.bind(this));
 
@@ -299,7 +299,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
   public async stop(): Promise<void> {
     await super.stop();
-    this.removeEventListener(SwarmTypes.NearestPeersRequest, this.onPeersRequest.bind(this));
+    // this.removeEventListener(SwarmTypes.NearestPeersRequest, this.onPeersRequest.bind(this));
     this.removeEventListener(SwarmTypes.StoreRequest, this.onStoreRequest.bind(this));
     this.removeEventListener(SwarmTypes.FetchRequest, this.onFetchRequest.bind(this));
     this.storage.clear();
