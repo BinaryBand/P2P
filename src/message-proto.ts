@@ -2,9 +2,9 @@ import { Components } from "libp2p/dist/src/components";
 import { PeerId } from "@libp2p/interface";
 import { LRUCache } from "lru-cache";
 
-import SwarmProto, { SwarmEvents } from "./swarm-proto.js";
 import { bytesToBase64, decodeAddress, encodePeerId, isMessageFragment } from "./tools/typing.js";
 import { blake3, reconstructShamirSecret, shamirSecretSharing } from "./tools/cryptography.js";
+import SwarmProto, { SwarmEvents } from "./swarm-proto.js";
 import { assert } from "./tools/utils.js";
 
 export interface MessageEvents extends SwarmEvents {
@@ -24,10 +24,10 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
   private static readonly SHAMIR_SHARES: number = 5;
   private static readonly SHAMIR_THRESHOLD: number = 3;
 
-  protected metadata: LRUCache<Address, Set<Base64>> = new LRUCache({ max: MessageProto.METADATA_BUCKET_SIZE });
+  private metadata: LRUCache<Address, Set<Base64>> = new LRUCache({ max: MessageProto.METADATA_BUCKET_SIZE });
 
-  constructor(components: Components, passphrase?: string) {
-    super(components, passphrase);
+  constructor(components: Components, passphrase?: string, role: Role = "tower") {
+    super(components, passphrase, role);
   }
 
   public static Message<T extends MessageEvents>(passphrase?: string): (params: Components) => MessageProto<T> {
@@ -62,7 +62,7 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
   private async storeMetadata(recipient: PeerId, contentHashes: Base64[]): Promise<void> {
     const owner: Address = encodePeerId(recipient);
     const ownerHash: Base64 = bytesToBase64(blake3(owner));
-    const nearestPeers: Address[] = await this.getNearestPeers(ownerHash, MessageProto.METADATA_SWARM_SIZE);
+    const nearestPeers: Address[] = await this.getNearestPeers(ownerHash, MessageProto.METADATA_SWARM_SIZE, "tower");
     await Promise.all(nearestPeers.map((addr: Address) => this.storeMetadataRemotely(addr, owner, contentHashes)));
   }
 
@@ -126,7 +126,7 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
   public async getInbox(peerId: PeerId): Promise<Message[]> {
     const recipient: Address = encodePeerId(peerId);
     const ownerHash: Base64 = bytesToBase64(blake3(recipient));
-    const nearestPeers: Address[] = await this.getNearestPeers(ownerHash, MessageProto.METADATA_SWARM_SIZE);
+    const nearestPeers: Address[] = await this.getNearestPeers(ownerHash, MessageProto.METADATA_SWARM_SIZE, "tower");
 
     // Fetch metadata from nearest peers
     const metadataPromises: Promise<Base64[]>[] = nearestPeers.map((addr: Address) =>
@@ -167,7 +167,6 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
 
   private async onStoreMetadataRequest({ detail }: CustomEvent<Parcel<SetMetadataRequest>>): Promise<void> {
     assert(this.verifyStamp(detail.payload), "Invalid stamp");
-    console.info(`${this.peerId}: Received metadata store request from ${detail.sender}`);
     this.storeMetadataLocally(detail.payload.owner, detail.payload.metadata);
   }
 
@@ -177,7 +176,6 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     assert(this.verifyStamp(detail.payload), "Invalid stamp");
     assert(detail.payload.address === detail.sender, "Address mismatch in metadata request");
 
-    console.info(`${this.peerId}: Received metadata get request from ${detail.sender}`);
     const address: Set<Base64> | null = this.metadata.get(detail.payload.address) ?? null;
     return { metadata: [...(address || [])], type: MessageTypes.GetMetadataResponse };
   }

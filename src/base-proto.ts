@@ -17,18 +17,17 @@ export enum BaseTypes {
 
 export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitter<T> {
   public static readonly PROTOCOL: string = "/secret-handshake/proto/0.6.0";
-  private static readonly MAX_CALLBACKS: number = 64; // max callbacks to keep in memory
+  private static readonly MAX_CALLBACKS: number = 128; // max callbacks to keep in memory
   private static readonly CALLBACK_TIMEOUT: number = 30_000; // 30 seconds until callback request expires
   private static readonly RATE_LIMIT: number = 300; // max requests per 30 seconds
+
+  private connectionManager: Components["connectionManager"];
+  private registrar: Components["registrar"];
 
   protected readonly sk: Uint8Array;
   protected get pk(): Uint8Array {
     return x25519.getPublicKey(this.sk);
   }
-
-  private connectionManager: Components["connectionManager"];
-  private registrar: Components["registrar"];
-
   protected peerId: PeerId;
   protected get address(): Address {
     return encodePeerId(this.peerId);
@@ -38,7 +37,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     max: BaseProto.MAX_CALLBACKS,
     ttl: BaseProto.CALLBACK_TIMEOUT,
   });
-  private rateLimitCache = new LRUCache<Base64, number>({ max: 1024, ttl: BaseProto.CALLBACK_TIMEOUT });
+  private rateLimitCache = new LRUCache<Base64, number>({ max: 2048, ttl: BaseProto.CALLBACK_TIMEOUT });
 
   constructor(components: Components) {
     super();

@@ -9,6 +9,15 @@ function countSetBits(num: number): number {
   return count;
 }
 
+/**
+ * Calculates the Hamming distance between two Uint8Array values.
+ * The distance is computed as the total number of differing bits
+ * between corresponding bytes of the two arrays.
+ *
+ * @param a - The first Uint8Array to compare.
+ * @param b - The second Uint8Array to compare.
+ * @returns The Hamming distance (number of differing bits) between `a` and `b`.
+ */
 export function calculateDistance(a: Uint8Array, b: Uint8Array): number {
   const length: number = Math.min(a.length, b.length);
 

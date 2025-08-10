@@ -2,7 +2,10 @@ type Address = import("./src/tools/typing").Address;
 type Base64 = import("./src/tools/typing").Base64;
 type Uuid = `${string}-${string}-${string}-${string}-${string}`;
 
+type Role = "phone" | "tower";
+
 interface PeerData {
+  role: Role;
   peerId: import("@libp2p/interface").PeerId;
   timestamp: number;
 }
@@ -23,6 +26,11 @@ interface EmptyResponse {
   type: import("./src/base-proto").BaseTypes.EmptyResponse;
 }
 
+interface PingResponse {
+  role: Role;
+  type: import("./src/handshake-proto").HandshakeTypes.PingResponse;
+}
+
 interface GetNearestPeersResponse {
   peers: Address[];
   type: import("./src/handshake-proto").HandshakeTypes.GetNearestPeersResponse;
@@ -38,9 +46,10 @@ interface GetMetadataResponse {
   type: import("./src/message-proto").MessageTypes.GetMetadataResponse;
 }
 
-type ResData = EmptyResponse | GetNearestPeersResponse | GetDataFragmentResponse | GetMetadataResponse;
+type ResData = EmptyResponse | PingResponse | GetNearestPeersResponse | GetDataFragmentResponse | GetMetadataResponse;
 
 interface InitiationRequest {
+  role: Role;
   stamp: Base64;
   type: import("./src/handshake-proto").HandshakeTypes.InitiationRequest;
 }
@@ -53,6 +62,7 @@ interface PingRequest {
 interface GetNearestPeersRequest {
   n: number;
   hash: Base64;
+  role: Role;
   stamp: Base64;
   type: import("./src/handshake-proto").HandshakeTypes.GetNearestPeersRequest;
 }

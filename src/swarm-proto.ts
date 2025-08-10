@@ -27,10 +27,10 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   private static readonly SWARM_SIZE: number = 3;
 
   private storageAuditTimer: NodeJS.Timeout | null = null;
-  protected storage: LRUCache<Base64, StorageItem> = new LRUCache({ max: SwarmProto.MAX_STORAGE_SIZE });
+  private storage: LRUCache<Base64, StorageItem> = new LRUCache({ max: SwarmProto.MAX_STORAGE_SIZE });
 
-  constructor(components: Components, passphrase?: string) {
-    super(components, passphrase);
+  constructor(components: Components, passphrase?: string, role: Role = "tower") {
+    super(components, passphrase, role);
   }
 
   public static Swarm<T extends SwarmEvents>(passphrase?: string): (params: Components) => SwarmProto<T> {
@@ -104,7 +104,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
    */
   public async storeData(data: string): Promise<Base64> {
     const query: Base64 = SwarmProto.hashFromData(data);
-    const nearestPeers: Address[] = await this.getNearestPeers(query, SwarmProto.SWARM_SIZE);
+    const nearestPeers: Address[] = await this.getNearestPeers(query, SwarmProto.SWARM_SIZE, "tower");
     await Promise.all(nearestPeers.map((addr: Address) => this.storeRemotely(addr, data)));
     return query;
   }

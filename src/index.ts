@@ -11,14 +11,16 @@ import { mdns } from "@libp2p/mdns";
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 
-import { peerIdFromPrivateKey, peerIdFromString } from "@libp2p/peer-id";
-import { Libp2p, PeerId, PrivateKey } from "@libp2p/interface";
+import { Libp2p, PeerId, PeerInfo, PrivateKey } from "@libp2p/interface";
+import { peerIdFromString } from "@libp2p/peer-id";
 import { keys } from "@libp2p/crypto";
 
-import readline from "readline";
+import inquirer from "inquirer";
 
 import MessageProto, { MessageEvents } from "./message-proto.js";
 import { blake3 } from "./tools/cryptography.js";
+import { assert } from "./tools/utils.js";
+import { encodePeerId, isAddress } from "./tools/typing.js";
 
 const bootstrapNodes: string[] = [
   "/ip4/104.131.131.82/tcp/4001/ipfs/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
@@ -47,94 +49,119 @@ function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?:
   return createLibp2p({ ...options, services: { ...options.services, proto: MessageProto.Message(passphrase) } });
 }
 
-const rl: readline.Interface = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
-
-function getTextInput(prompt: string): Promise<string> {
-  return new Promise((resolve) => {
-    rl.question(prompt, resolve);
-  });
-}
-
 async function getPrivateKeyFromSeed(password: string): Promise<PrivateKey> {
   const seed: Uint8Array = blake3(password);
   return await keys.generateKeyPairFromSeed("Ed25519", seed);
 }
 
-async function main() {
+type ClientNode = Libp2p<{ proto: MessageProto<MessageEvents>; identify: Identify }>;
+
+async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void> {
+  assert(!client.peerId.equals(peerId), "Cannot bootstrap to self");
+  assert(isAddress(encodePeerId(peerId)), "Invalid peer ID format");
+
+  console.log("Bootstrapping with peer:", peerId.toString());
+  const bootstrapPeer: PeerInfo = await client.peerRouting.findPeer(peerId);
+
+  const peer = await client.dialProtocol(bootstrapPeer.multiaddrs, MessageProto.PROTOCOL, {
+    signal: AbortSignal.timeout(500_000),
+  });
+  console.log("Connected to bootstrap peer:", peer.id.toString());
+}
+
+async function sendMessage(client: ClientNode, recipient: PeerId, messages: string[]): Promise<void> {
+  assert(client.services.proto, "Message service not initialized");
+  assert(isAddress(encodePeerId(recipient)), "Invalid recipient address");
+  assert((await client.services.proto.getAllPeers()).length !== 0, "Recipient not connected");
+
+  console.log("Sending message to:", recipient);
+  await client.services.proto.sendMessages(recipient, messages);
+  console.log("Message sent successfully!");
+}
+
+async function main(): Promise<void> {
   console.log("Starting application...");
 
-  // Prompt the user for input
-  const seedPassword: string = await getTextInput("Enter your name: ");
-  const privateKey: PrivateKey = await getPrivateKeyFromSeed(seedPassword);
-  const peerId: PeerId = peerIdFromPrivateKey(privateKey);
-  console.log("Peer ID:", peerId.toString());
-  await getTextInput("Press Enter to continue...");
+  // Prompt the user for a seed password
+  const { seedPassword } = await inquirer.prompt([
+    { type: "input", name: "seedPassword", message: "Enter a secret password:" },
+  ]);
 
-  const client: Libp2p<{ proto: MessageProto<MessageEvents>; identify: Identify }> = await getNewClient(
+  // Generate the private key from the seed password
+  const privateKey: PrivateKey = await getPrivateKeyFromSeed(seedPassword);
+  const client: ClientNode = await getNewClient(
     ["/ip4/0.0.0.0/udp/0/webrtc-direct", "/ip4/127.0.0.1/tcp/0/ws"],
     privateKey
   );
 
   await client.start();
-  await new Promise((resolve) => setTimeout(resolve, 5000));
-  console.log("Client started with ID:", client.peerId.toString());
-
-  const bootstrapPeerId: PeerId = peerIdFromString("12D3KooWNUG46aTGP9aKo5kJF8KQtjah74qSkH4YQqaqEHVWVktz");
-  if (!client.peerId.equals(bootstrapPeerId)) {
-    console.log("Bootstrapping with peer:", bootstrapPeerId.toString());
-    const bootstrapPeer = await client.peerRouting.findPeer(bootstrapPeerId);
-
-    await client.dialProtocol(bootstrapPeer.multiaddrs, MessageProto.PROTOCOL, {
-      signal: AbortSignal.timeout(500_000),
-    });
-  }
-
-  while (client.services.proto.getPeers().length < 2) {
-    console.log(client.services.proto.getPeers().length, "peers connected");
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  console.log("Bootstrapped with peers:", client.services.proto.getPeers().length);
+  console.log("Client started with ID:", client.peerId.toString(), "Please wait for connections...");
   await new Promise((resolve) => setTimeout(resolve, 5000));
 
-  while (true) {
+  let running: boolean = true;
+  while (running) {
     try {
-      console.log("Select an action:");
-      console.log("\t1. Send a message (send)");
-      console.log("\t2. View inbox (inbox)");
-      console.log("\t3. Exit (exit)");
-      console.log();
+      const { action } = await inquirer.prompt([
+        {
+          type: "list",
+          name: "action",
+          message: "Select an action:",
+          choices: [
+            { name: "Bootstrap to Peer ID", value: "bootstrap" },
+            { name: "View All Peers", value: "pool" },
+            { name: "View Local Peers", value: "local" },
+            { name: "Send a message", value: "send" },
+            { name: "View inbox", value: "inbox" },
+            { name: "Exit", value: "exit" },
+          ],
+        },
+      ]);
 
-      const action: string = await getTextInput("Enter 'send' to send a message, 'exit' to quit: ");
-      switch (action.toLowerCase()) {
-        case "1":
-        case "send":
-          const recipient: string = await getTextInput("Enter recipient peer ID: ");
-          const message: string = await getTextInput("Enter your message: ");
-          const recipientPeerId: PeerId = peerIdFromString(recipient);
-          console.log("Sending message to:", recipientPeerId.toString());
-          await client.services.proto.sendMessages(recipientPeerId, [message]);
-          console.log("Message sent successfully!");
+      switch (action) {
+        case "bootstrap":
+          const { bootstrapAddress } = await inquirer.prompt([
+            { type: "input", name: "bootstrapAddress", message: "Enter bootstrap peer ID:" },
+          ]);
+
+          const bootstrapPeerId: PeerId = peerIdFromString(bootstrapAddress);
+          await bootstrapClient(client, bootstrapPeerId);
           break;
-        case "2":
+        case "pool":
+          const pool: Address[] = await client.services.proto.getAllPeers();
+          console.log("Connected peers:", pool);
+          break;
+        case "local":
+          const localPeers: Address[] = await client.services.proto.getLocalPeers();
+          console.log("Local peers:", localPeers);
+          break;
+        case "send":
+          const { recipient, message } = await inquirer.prompt([
+            { type: "input", name: "recipient", message: "Enter recipient peer ID:" },
+            { type: "input", name: "message", message: "Enter your message:" },
+          ]);
+
+          await sendMessage(client, recipient, [message]);
+          break;
         case "inbox":
           const inbox: Message[] = await client.services.proto.getInbox(client.peerId);
           console.log("Inbox messages:", inbox);
           break;
-        case "3":
         case "exit":
-          console.log("Exiting...");
-          rl.close();
+          running = false;
           await client.stop();
-          return;
+          console.log("Exiting...");
+          break;
         default:
           console.log("Invalid action. Please try again.");
           break;
       }
-    } catch {}
+    } catch (err: unknown) {
+      const errorMessage: string = err instanceof Error ? err.message : "An unknown error occurred";
+      console.error("Error:", errorMessage, "\n");
+    }
   }
+
+  process.exit(0);
 }
 
 main().catch((error) => {

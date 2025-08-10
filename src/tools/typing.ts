@@ -4,8 +4,8 @@ import { PeerId } from "@libp2p/interface";
 import { BaseTypes } from "../base-proto.js";
 import { HandshakeTypes } from "../handshake-proto.js";
 import { SwarmTypes } from "../swarm-proto.js";
-import { assert } from "./utils.js";
 import { MessageTypes } from "../message-proto.js";
+import { assert } from "./utils.js";
 
 export type Address = `${Formats.Base58},${string}`;
 export type Base64 = `${Formats.Base64},${string}`;
@@ -13,7 +13,6 @@ export type Base64 = `${Formats.Base64},${string}`;
 export enum Formats {
   Base58 = "base58",
   Base64 = "base64",
-  Uuid = "uuid",
 }
 
 export const decode = TextDecoder.prototype.decode.bind(new TextDecoder());
@@ -74,7 +73,6 @@ export function isMessageFragment(fragment: unknown): fragment is MessageFragmen
 }
 
 export function isMessage(message: unknown): message is Message {
-  let control: Message;
   if (
     message !== undefined &&
     message !== null &&
@@ -86,14 +84,13 @@ export function isMessage(message: unknown): message is Message {
     "timestamp" in message &&
     typeof message.timestamp === "number"
   ) {
-    control = { sender: message.sender, text: message.text, timestamp: message.timestamp };
+    const _control: Message = { sender: message.sender, text: message.text, timestamp: message.timestamp };
     return true;
   }
   return false;
 }
 
 export function isParcel(parcel: unknown): parcel is Parcel<ReqData | Return> {
-  let control: Parcel<ReqData | Return>;
   if (
     parcel !== undefined &&
     parcel !== null &&
@@ -107,7 +104,7 @@ export function isParcel(parcel: unknown): parcel is Parcel<ReqData | Return> {
     "payload" in parcel &&
     (isRequest(parcel.payload) || isReturn(parcel.payload))
   ) {
-    control = {
+    const _control: Parcel<ReqData | Return> = {
       callbackId: parcel.callbackId,
       payload: parcel.payload,
       receiver: parcel.receiver,
@@ -126,8 +123,13 @@ export function isRequest(payload: unknown): payload is ReqData {
   let control: ReqData;
   switch (payload.type) {
     case HandshakeTypes.InitiationRequest: {
-      if ("stamp" in payload && isBase64(payload.stamp)) {
-        control = { stamp: payload.stamp, type: payload.type };
+      if (
+        "role" in payload &&
+        (payload.role === "phone" || payload.role === "tower") &&
+        "stamp" in payload &&
+        isBase64(payload.stamp)
+      ) {
+        control = { role: payload.role, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
@@ -143,12 +145,14 @@ export function isRequest(payload: unknown): payload is ReqData {
       if (
         "n" in payload &&
         typeof payload.n === "number" &&
+        "role" in payload &&
+        (payload.role === "phone" || payload.role === "tower") &&
         "hash" in payload &&
         isBase64(payload.hash) &&
         "stamp" in payload &&
         isBase64(payload.stamp)
       ) {
-        control = { n: payload.n, hash: payload.hash, stamp: payload.stamp, type: payload.type };
+        control = { n: payload.n, role: payload.role, hash: payload.hash, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
@@ -226,6 +230,12 @@ function isResponse(response: unknown): response is ResData {
     case BaseTypes.EmptyResponse:
       control = { type: response.type };
       return true;
+    case HandshakeTypes.PingResponse:
+      if ("role" in response && (response.role === "phone" || response.role === "tower")) {
+        control = { role: response.role, type: response.type };
+        return true;
+      }
+      break;
     case HandshakeTypes.GetNearestPeersResponse:
       if ("peers" in response && Array.isArray(response.peers) && response.peers.every(isAddress)) {
         control = { peers: response.peers, type: response.type };
