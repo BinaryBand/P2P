@@ -132,14 +132,14 @@ export function isRequest(payload: unknown): payload is ReqData {
       }
       break;
     }
-    case HandshakeTypes.RequestPulse: {
+    case HandshakeTypes.PingRequest: {
       if ("stamp" in payload && isBase64(payload.stamp)) {
         control = { stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
     }
-    case HandshakeTypes.NearestPeersRequest:
+    case HandshakeTypes.GetNearestPeersRequest:
       if (
         "n" in payload &&
         typeof payload.n === "number" &&
@@ -152,13 +152,13 @@ export function isRequest(payload: unknown): payload is ReqData {
         return true;
       }
       break;
-    case SwarmTypes.StoreRequest:
+    case SwarmTypes.SetDataFragmentRequest:
       if ("data" in payload && typeof payload.data === "string" && "stamp" in payload && isBase64(payload.stamp)) {
         control = { data: payload.data, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
-    case SwarmTypes.FetchRequest:
+    case SwarmTypes.GetDataFragmentRequest:
       if ("hash" in payload && isBase64(payload.hash) && "stamp" in payload && isBase64(payload.stamp)) {
         control = { hash: payload.hash, stamp: payload.stamp, type: payload.type };
         return true;
@@ -226,13 +226,13 @@ function isResponse(response: unknown): response is ResData {
     case BaseTypes.EmptyResponse:
       control = { type: response.type };
       return true;
-    case HandshakeTypes.NearestPeersResponse:
+    case HandshakeTypes.GetNearestPeersResponse:
       if ("peers" in response && Array.isArray(response.peers) && response.peers.every(isAddress)) {
         control = { peers: response.peers, type: response.type };
         return true;
       }
       break;
-    case SwarmTypes.FetchResponse:
+    case SwarmTypes.GetDataFragmentResponse:
       if ("fragment" in response && (typeof response.fragment === "string" || response.fragment === null)) {
         control = { fragment: response.fragment, type: response.type };
         return true;

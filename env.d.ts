@@ -23,14 +23,14 @@ interface EmptyResponse {
   type: import("./src/base-proto").BaseTypes.EmptyResponse;
 }
 
-interface NearestPeersResponse {
+interface GetNearestPeersResponse {
   peers: Address[];
-  type: import("./src/handshake-proto").HandshakeTypes.NearestPeersResponse;
+  type: import("./src/handshake-proto").HandshakeTypes.GetNearestPeersResponse;
 }
 
-interface FetchResponse {
+interface GetDataFragmentResponse {
   fragment: string | null;
-  type: import("./src/swarm-proto").SwarmTypes.FetchResponse;
+  type: import("./src/swarm-proto").SwarmTypes.GetDataFragmentResponse;
 }
 
 interface GetMetadataResponse {
@@ -38,35 +38,35 @@ interface GetMetadataResponse {
   type: import("./src/message-proto").MessageTypes.GetMetadataResponse;
 }
 
-type ResData = EmptyResponse | NearestPeersResponse | FetchResponse | GetMetadataResponse;
+type ResData = EmptyResponse | GetNearestPeersResponse | GetDataFragmentResponse | GetMetadataResponse;
 
 interface InitiationRequest {
   stamp: Base64;
   type: import("./src/handshake-proto").HandshakeTypes.InitiationRequest;
 }
 
-interface RequestPulse {
+interface PingRequest {
   stamp: Base64;
-  type: import("./src/handshake-proto").HandshakeTypes.RequestPulse;
+  type: import("./src/handshake-proto").HandshakeTypes.PingRequest;
 }
 
-interface NearestPeersRequest {
+interface GetNearestPeersRequest {
   n: number;
   hash: Base64;
   stamp: Base64;
-  type: import("./src/handshake-proto").HandshakeTypes.NearestPeersRequest;
+  type: import("./src/handshake-proto").HandshakeTypes.GetNearestPeersRequest;
 }
 
-interface StoreRequest {
+interface SetDataFragmentRequest {
   data: string;
   stamp: Base64;
-  type: import("./src/swarm-proto").SwarmTypes.StoreRequest;
+  type: import("./src/swarm-proto").SwarmTypes.SetDataFragmentRequest;
 }
 
-interface FetchRequest {
+interface GetDataFragmentRequest {
   hash: Base64;
   stamp: Base64;
-  type: import("./src/swarm-proto").SwarmTypes.FetchRequest;
+  type: import("./src/swarm-proto").SwarmTypes.GetDataFragmentRequest;
 }
 
 interface SetMetadataRequest {
@@ -84,10 +84,10 @@ interface GetMetadataRequest {
 
 type ReqData =
   | InitiationRequest
-  | RequestPulse
-  | NearestPeersRequest
-  | StoreRequest
-  | FetchRequest
+  | PingRequest
+  | GetNearestPeersRequest
+  | SetDataFragmentRequest
+  | GetDataFragmentRequest
   | SetMetadataRequest
   | GetMetadataRequest;
 

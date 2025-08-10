@@ -4,21 +4,21 @@ import { LRUCache } from "lru-cache";
 
 import { bytesToBase64, decodeAddress, encode, encodePeerId } from "./tools/typing.js";
 import { blake2b, blake3, totp } from "./tools/cryptography.js";
+import { orderPeers } from "./tools/routing.js";
 import { assert } from "./tools/utils.js";
 import BaseProto from "./base-proto.js";
-import { orderPeers } from "./tools/routing.js";
 
 export interface HandshakeEvents extends ProtocolEvents {
   [HandshakeTypes.InitiationRequest]: CustomEvent<Parcel<InitiationRequest>>;
-  [HandshakeTypes.RequestPulse]: CustomEvent<Parcel<RequestPulse>>;
-  [HandshakeTypes.NearestPeersRequest]: CustomEvent<Parcel<NearestPeersRequest>>;
+  [HandshakeTypes.PingRequest]: CustomEvent<Parcel<PingRequest>>;
+  [HandshakeTypes.GetNearestPeersRequest]: CustomEvent<Parcel<GetNearestPeersRequest>>;
 }
 
 export enum HandshakeTypes {
   InitiationRequest = "handshake:secret-handshake",
-  RequestPulse = "handshake:request-pulse",
-  NearestPeersRequest = "handshake:nearest-peers-request",
-  NearestPeersResponse = "handshake:nearest-peers-response",
+  PingRequest = "handshake:ping-request",
+  GetNearestPeersRequest = "handshake:get-nearest-peers-request",
+  GetNearestPeersResponse = "handshake:nearest-peers-response",
 }
 
 export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto<T> {
@@ -29,9 +29,9 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   private static readonly NET_SIZE: number = 3;
   private static readonly PEER_AUDIT_INTERVAL: number = 20_000; // 20 seconds
   private static readonly PEER_FRESHNESS_THRESHOLD: number = 60_000; // 1 minute
-  private peerAuditTimer: NodeJS.Timeout | null = null;
 
   protected events: TypedEventTarget<Libp2pEvents>;
+  private peerAuditTimer: NodeJS.Timeout | null = null;
   protected peers: LRUCache<Address, PeerData> = new LRUCache({ max: 256 });
 
   constructor(components: Components, passphrase: string = HandshakeProto.DEFAULT_PASSPHRASE) {
@@ -108,7 +108,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
    */
   protected async requestPulse(peerId: PeerId): Promise<void> {
     try {
-      const request: RequestPulse = this.stampRequest({ type: HandshakeTypes.RequestPulse });
+      const request: PingRequest = this.stampRequest({ type: HandshakeTypes.PingRequest });
       await this.sendRequest(peerId, request);
       this.addPeer(peerId);
     } catch {
@@ -134,8 +134,12 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
 
     try {
       const peerId: PeerId = decodeAddress(address);
-      const request: NearestPeersRequest = this.stampRequest({ n, hash, type: HandshakeTypes.NearestPeersRequest });
-      const response: Return<NearestPeersResponse> = await this.sendRequest(peerId, request);
+      const request: GetNearestPeersRequest = this.stampRequest({
+        n,
+        hash,
+        type: HandshakeTypes.GetNearestPeersRequest,
+      });
+      const response: Return<GetNearestPeersResponse> = await this.sendRequest(peerId, request);
       assert(response.success, `Failed to find nearest peers for ${peerId}`);
 
       return response.data.peers;
@@ -195,7 +199,10 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   }
 
   private async initiateHandshake({ detail }: CustomEvent<IdentifyResult>): Promise<void> {
-    assert(detail.protocols.includes(BaseProto.PROTOCOL), "Invalid protocol");
+    if (!detail.protocols.includes(HandshakeProto.PROTOCOL)) {
+      return;
+    }
+
     console.info(`${this.peerId}: Initiating handshake with peer: ${detail.peerId.toString()}`);
 
     try {
@@ -213,15 +220,15 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     assert(this.verifyStamp(detail.payload), "Invalid stamp in initiation request");
   }
 
-  private onRequestPulse({ detail }: CustomEvent<Parcel<RequestPulse>>): void {
-    console.info(`${this.peerId}: Received pulse request from peer: ${detail.sender}`);
-    assert(this.verifyStamp(detail.payload), "Invalid stamp in pulse request");
+  private onPingRequest({ detail }: CustomEvent<Parcel<PingRequest>>): void {
+    console.info(`${this.peerId}: Received ping request from peer: ${detail.sender}`);
+    assert(this.verifyStamp(detail.payload), "Invalid stamp in ping request");
   }
 
-  private onPeersRequest({ detail }: CustomEvent<Parcel<NearestPeersRequest>>): NearestPeersResponse {
+  private onPeersRequest({ detail }: CustomEvent<Parcel<GetNearestPeersRequest>>): GetNearestPeersResponse {
     assert(this.verifyStamp(detail.payload), "Invalid stamp");
     const peers: Address[] = this.getNearestLocalPeers(detail.payload.hash, detail.payload.n);
-    return { peers, type: HandshakeTypes.NearestPeersResponse };
+    return { peers, type: HandshakeTypes.GetNearestPeersResponse };
   }
 
   private peerIsStale(peerId: PeerId): boolean {
@@ -243,9 +250,10 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
 
   public async start(): Promise<void> {
     await super.start();
-    this.addEventListener(HandshakeTypes.NearestPeersRequest, this.onPeersRequest.bind(this));
+
     this.addEventListener(HandshakeTypes.InitiationRequest, this.onInitiationRequest.bind(this));
-    this.addEventListener(HandshakeTypes.RequestPulse, this.onRequestPulse.bind(this));
+    this.addEventListener(HandshakeTypes.PingRequest, this.onPingRequest.bind(this));
+    this.addEventListener(HandshakeTypes.GetNearestPeersRequest, this.onPeersRequest.bind(this));
     this.events.addEventListener("peer:identify", this.initiateHandshake.bind(this));
     this.events.addEventListener("peer:disconnect", this.peerDropped.bind(this));
 
@@ -255,9 +263,10 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
 
   public async stop(): Promise<void> {
     await super.stop();
-    this.removeEventListener(HandshakeTypes.NearestPeersRequest, this.onPeersRequest.bind(this));
+
     this.removeEventListener(HandshakeTypes.InitiationRequest, this.onInitiationRequest.bind(this));
-    this.removeEventListener(HandshakeTypes.RequestPulse, this.onRequestPulse.bind(this));
+    this.removeEventListener(HandshakeTypes.PingRequest, this.onPingRequest.bind(this));
+    this.removeEventListener(HandshakeTypes.GetNearestPeersRequest, this.onPeersRequest.bind(this));
     this.events.removeEventListener("peer:identify", this.initiateHandshake.bind(this));
     this.events.removeEventListener("peer:disconnect", this.peerDropped.bind(this));
     this.peers.clear();

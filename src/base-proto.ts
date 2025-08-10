@@ -16,7 +16,7 @@ export enum BaseTypes {
 }
 
 export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitter<T> {
-  public static readonly PROTOCOL: string = "/secret-handshake/proto/0.5.2";
+  public static readonly PROTOCOL: string = "/secret-handshake/proto/0.6.0";
   private static readonly MAX_CALLBACKS: number = 64; // max callbacks to keep in memory
   private static readonly CALLBACK_TIMEOUT: number = 30_000; // 30 seconds until callback request expires
   private static readonly RATE_LIMIT: number = 300; // max requests per 30 seconds

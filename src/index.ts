@@ -104,8 +104,7 @@ async function main() {
       console.log("Select an action:");
       console.log("\t1. Send a message (send)");
       console.log("\t2. View inbox (inbox)");
-      console.log("\t3. View metadata cache (cache)");
-      console.log("\t4. Exit (exit)");
+      console.log("\t3. Exit (exit)");
       console.log();
 
       const action: string = await getTextInput("Enter 'send' to send a message, 'exit' to quit: ");
@@ -125,10 +124,6 @@ async function main() {
           console.log("Inbox messages:", inbox);
           break;
         case "3":
-        case "cache":
-          console.log("Metadata cache:", client.services.proto.logCache());
-          break;
-        case "4":
         case "exit":
           console.log("Exiting...");
           rl.close();

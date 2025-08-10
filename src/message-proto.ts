@@ -13,7 +13,7 @@ export interface MessageEvents extends SwarmEvents {
 }
 
 export enum MessageTypes {
-  SetMetadataRequest = "message:store-metadata-request",
+  SetMetadataRequest = "message:set-metadata-request",
   GetMetadataRequest = "message:get-metadata-request",
   GetMetadataResponse = "message:get-metadata-response",
 }
@@ -32,10 +32,6 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
 
   public static Message<T extends MessageEvents>(passphrase?: string): (params: Components) => MessageProto<T> {
     return (params: Components) => new MessageProto(params, passphrase);
-  }
-
-  public logCache(): void {
-    console.log("Metadata Cache:", JSON.stringify(this.metadata.dump(), null, 2));
   }
 
   private storeMetadataLocally(owner: Address, metadata: Base64[]): void {
