@@ -122,7 +122,6 @@ async function main(): Promise<void> {
           const { bootstrapAddress } = await inquirer.prompt([
             { type: "input", name: "bootstrapAddress", message: "Enter bootstrap peer ID:" },
           ]);
-
           const bootstrapPeerId: PeerId = peerIdFromString(bootstrapAddress);
           await bootstrapClient(client, bootstrapPeerId);
           break;
@@ -139,7 +138,6 @@ async function main(): Promise<void> {
             { type: "input", name: "recipient", message: "Enter recipient peer ID:" },
             { type: "input", name: "message", message: "Enter your message:" },
           ]);
-
           await sendMessage(client, recipient, [message]);
           break;
         case "inbox":

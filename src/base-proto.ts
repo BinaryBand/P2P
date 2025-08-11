@@ -33,6 +33,9 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     return encodePeerId(this.peerId);
   }
 
+  private outgoingConnections = new LRUCache<Address, Connection>({
+    max: 1024,
+  });
   private callbackQueue = new LRUCache<Uuid, Callback>({
     max: BaseProto.MAX_CALLBACKS,
     ttl: BaseProto.CALLBACK_TIMEOUT,
@@ -67,10 +70,19 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     return BaseProto.byteArrayToString(chunks);
   }
 
+  private async getConnection(peerId: PeerId): Promise<Connection> {
+    const existing: Connection | undefined = this.outgoingConnections.get(encodePeerId(peerId));
+    if (existing) return existing;
+
+    const connection: Connection = await this.connectionManager.openConnection(peerId);
+    this.outgoingConnections.set(encodePeerId(peerId), connection);
+    return connection;
+  }
+
   private async sendParcelNoCallback<T extends ReqData | Return>(parcel: Parcel<T>): Promise<void> {
     const peerId: PeerId = decodeAddress(parcel.receiver);
 
-    const connection: Connection = await this.connectionManager.openConnection(peerId);
+    const connection: Connection = await this.getConnection(peerId);
     const outgoing: Stream = await connection.newStream(BaseProto.PROTOCOL);
     try {
       const parcelString: string = JSON.stringify(parcel);
