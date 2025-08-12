@@ -11,16 +11,16 @@ import { mdns } from "@libp2p/mdns";
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 
-import { Libp2p, PeerId, PeerInfo, PrivateKey } from "@libp2p/interface";
+import { Libp2p, PeerId, PeerInfo, PrivateKey, Stream } from "@libp2p/interface";
 import { peerIdFromString } from "@libp2p/peer-id";
 import { keys } from "@libp2p/crypto";
 
 import inquirer from "inquirer";
 
 import MessageProto, { MessageEvents } from "./message-proto.js";
+import { encodePeerId, isAddress } from "./tools/typing.js";
 import { blake3 } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
-import { encodePeerId, isAddress } from "./tools/typing.js";
 
 const bootstrapNodes: string[] = [
   "/ip4/104.131.131.82/tcp/4001/ipfs/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
@@ -68,12 +68,39 @@ async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void
   assert(isAddress(encodePeerId(peerId)), "Invalid peer ID format");
 
   console.log("Bootstrapping with peer:", peerId.toString());
-  const bootstrapPeer: PeerInfo = await client.peerRouting.findPeer(peerId);
 
-  const peer = await client.dialProtocol(bootstrapPeer.multiaddrs, MessageProto.PROTOCOL, {
-    signal: AbortSignal.timeout(500_000),
-  });
-  console.log("Connected to bootstrap peer:", peer.id.toString());
+  // Create an AbortController
+  const abortController: AbortController = new AbortController();
+  const { signal } = abortController;
+
+  // Set up inquirer to listen for a key press
+  const keyPressListener = inquirer.prompt([
+    {
+      type: "input",
+      name: "abort",
+      message: 'Press "q" to abort bootstrapping...',
+      filter: (input) => input.trim().toLowerCase(),
+    },
+  ]);
+
+  try {
+    keyPressListener.then((answers) => {
+      if (answers.abort === "q") {
+        console.log("Aborting bootstrapping...");
+        abortController.abort();
+      }
+    });
+
+    const bootstrapPeer: PeerInfo = await client.peerRouting.findPeer(peerId);
+    const peer: Stream = await client.dialProtocol(bootstrapPeer.multiaddrs, MessageProto.PROTOCOL, { signal });
+    console.log("Connected to bootstrap peer:", peer.id.toString());
+  } catch (error) {
+    if (signal.aborted) {
+      console.log("Bootstrapping was aborted.");
+    } else {
+      console.error("Error during bootstrapping:", error);
+    }
+  }
 }
 
 async function sendMessage(client: ClientNode, recipient: PeerId, messages: string[]): Promise<void> {
@@ -112,11 +139,10 @@ async function main(): Promise<void> {
         {
           type: "list",
           name: "action",
-          message: "Select an action:",
+          message: `${client.peerId}: Select an action:`,
           choices: [
             { name: "Bootstrap to Peer ID", value: "bootstrap" },
-            { name: "View All Peers", value: "pool" },
-            { name: "View Local Peers", value: "local" },
+            { name: "View Neighbors", value: "pool" },
             { name: "Send a message", value: "send" },
             { name: "View inbox", value: "inbox" },
             { name: "Exit", value: "exit" },
@@ -129,7 +155,6 @@ async function main(): Promise<void> {
           const { bootstrapAddress } = await inquirer.prompt([
             { type: "input", name: "bootstrapAddress", message: "Enter bootstrap peer ID:" },
           ]);
-
           const bootstrapPeerId: PeerId = peerIdFromString(bootstrapAddress);
           await bootstrapClient(client, bootstrapPeerId);
           break;
@@ -137,16 +162,11 @@ async function main(): Promise<void> {
           const pool: Address[] = await client.services.proto.getAllPeers();
           console.log("Connected peers:", pool);
           break;
-        case "local":
-          const localPeers: Address[] = await client.services.proto.getLocalPeers();
-          console.log("Local peers:", localPeers);
-          break;
         case "send":
           const { recipient, message } = await inquirer.prompt([
             { type: "input", name: "recipient", message: "Enter recipient peer ID:" },
             { type: "input", name: "message", message: "Enter your message:" },
           ]);
-
           await sendMessage(client, recipient, [message]);
           break;
         case "inbox":

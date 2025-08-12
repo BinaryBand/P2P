@@ -1,30 +1,20 @@
 import { Components } from "libp2p/dist/src/components";
 import { PeerId } from "@libp2p/interface";
-import { LRUCache } from "lru-cache";
+// import { LRUCache } from "lru-cache";
 
-import { bytesToBase64, decodeAddress, encodePeerId, isMessageFragment } from "./tools/typing.js";
+import { bytesToBase64, decodeAddress, encode, encodePeerId, isMessageFragment } from "./tools/typing.js";
 import { blake3, reconstructShamirSecret, shamirSecretSharing } from "./tools/cryptography.js";
 import SwarmProto, { SwarmEvents } from "./swarm-proto.js";
 import { assert } from "./tools/utils.js";
 
-export interface MessageEvents extends SwarmEvents {
-  [MessageTypes.SetMetadataRequest]: CustomEvent<Parcel<SetMetadataRequest>>;
-  [MessageTypes.GetMetadataRequest]: CustomEvent<Parcel<GetMetadataRequest>>;
-}
+export interface MessageEvents extends SwarmEvents {}
 
-export enum MessageTypes {
-  SetMetadataRequest = "message:set-metadata-request",
-  GetMetadataRequest = "message:get-metadata-request",
-  GetMetadataResponse = "message:get-metadata-response",
-}
+export enum MessageTypes {}
 
 export default class MessageProto<T extends MessageEvents> extends SwarmProto<T> {
-  private static readonly METADATA_BUCKET_SIZE: number = 2048;
   private static readonly METADATA_SWARM_SIZE: number = 5;
   private static readonly SHAMIR_SHARES: number = 5;
   private static readonly SHAMIR_THRESHOLD: number = 3;
-
-  private metadata: LRUCache<Address, Set<Base64>> = new LRUCache({ max: MessageProto.METADATA_BUCKET_SIZE });
 
   constructor(components: Components, passphrase?: string, role: Role = "tower") {
     super(components, passphrase, role);
@@ -34,162 +24,98 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     return (params: Components) => new MessageProto(params, passphrase);
   }
 
-  private storeMetadataLocally(owner: Address, metadata: Base64[]): void {
-    const existingHashes: Set<Base64> = this.metadata.get(owner) || new Set();
-    for (const hash of metadata) {
-      existingHashes.add(hash);
-    }
-    this.metadata.set(owner, existingHashes);
-  }
-
-  private async storeMetadataRemotely(holder: Address, owner: Address, metadata: Base64[]): Promise<boolean> {
-    if (this.address === holder) {
-      this.storeMetadataLocally(owner, metadata);
-      return true;
-    }
-
-    try {
-      const peerId: PeerId = decodeAddress(holder);
-      const request: SetMetadataRequest = this.stampRequest({ owner, metadata, type: MessageTypes.SetMetadataRequest });
-      await this.sendRequest(peerId, request);
-      return true;
-    } catch (err) {
-      console.warn(`Error storing data to ${holder}:`, err);
-      return false;
-    }
-  }
-
-  private async storeMetadata(recipient: PeerId, contentHashes: Base64[]): Promise<void> {
-    const owner: Address = encodePeerId(recipient);
-    const ownerHash: Base64 = bytesToBase64(blake3(owner));
-    const nearestPeers: Address[] = await this.getNearestPeers(ownerHash, MessageProto.METADATA_SWARM_SIZE, "tower");
-    await Promise.all(nearestPeers.map((addr: Address) => this.storeMetadataRemotely(addr, owner, contentHashes)));
-  }
-
-  private getLocalMetadata(): Set<Base64> {
-    return this.metadata.get(this.address) || new Set();
-  }
-
-  private async getRemoteMetadata(holder: PeerId, owner: Address): Promise<Base64[]> {
-    if (holder.equals(this.peerId)) {
-      return Array.from(this.getLocalMetadata());
-    }
-
-    try {
-      const request: GetMetadataRequest = this.stampRequest({ address: owner, type: MessageTypes.GetMetadataRequest });
-      const response: Return<GetMetadataResponse> = await this.sendRequest(holder, request);
-      assert(response.success, `Failed to find nearest peers for ${owner}`);
-
-      return response.data.metadata || [];
-    } catch (err) {
-      console.warn(`Error getting remote storage of ${owner} from ${holder}:`, err);
-      return [];
-    }
-  }
-
-  private async sendMessage(text: string): Promise<Base64[]> {
-    const message: Message = { sender: this.address, text, timestamp: Date.now() };
-    const messageString: string = JSON.stringify(message);
-
-    // Split the message into Shamir shares
-    const fragments: Base64[] = await shamirSecretSharing(
-      messageString,
+  private async uploadMessage(text: string): Promise<Base64[]> {
+    const message: Message = text;
+    const fragments: string[] = await shamirSecretSharing(
+      message,
       MessageProto.SHAMIR_SHARES,
       MessageProto.SHAMIR_THRESHOLD
     );
 
     const id: Uuid = crypto.randomUUID();
-    const messageFragments: MessageFragment[] = fragments.map((content: Base64) => ({ id, content }));
+    const messageFragments: MessageFragment[] = fragments.map((content: string) => ({ id, content }));
     assert(messageFragments.every(isMessageFragment), "All fragments must be valid MessageFragment");
 
-    return Promise.all(
-      messageFragments.map((fragment: MessageFragment) => {
-        const fragmentString: string = JSON.stringify(fragment);
-        return this.storeData(fragmentString);
-      })
-    );
+    const fragmentStrings: string[] = messageFragments.map((fragment: MessageFragment) => JSON.stringify(fragment));
+    return this.storeFragments(fragmentStrings);
   }
 
   public async sendMessages(recipient: PeerId, messages: string[]): Promise<void> {
-    const hashes: Base64[][] = await Promise.all(Array.from(messages).map(this.sendMessage.bind(this)));
-    await this.storeMetadata(recipient, hashes.flat());
+    const hashes: Base64[][] = await Promise.all(Array.from(messages).map(this.uploadMessage.bind(this)));
+
+    const address: Address = encodePeerId(recipient);
+    await this.storeMetadata(address, hashes.flat());
   }
 
-  private static tryParse<T>(rawString: string): T | undefined {
-    try {
-      const result: T = JSON.parse(rawString);
-      return result;
-    } catch {}
-    return undefined;
-  }
+  // private static tryParse<T>(rawString: string): T | undefined {
+  //   try {
+  //     const result: T = JSON.parse(rawString);
+  //     return result;
+  //   } catch {}
+  //   return undefined;
+  // }
 
   public async getInbox(peerId: PeerId): Promise<Message[]> {
+    console.log("Get Inbox");
+
     const recipient: Address = encodePeerId(peerId);
     const ownerHash: Base64 = bytesToBase64(blake3(recipient));
     const nearestPeers: Address[] = await this.getNearestPeers(ownerHash, MessageProto.METADATA_SWARM_SIZE, "tower");
 
-    // Fetch metadata from nearest peers
-    const metadataPromises: Promise<Base64[]>[] = nearestPeers.map((addr: Address) =>
-      this.getRemoteMetadata(peerId, addr)
-    );
-    const metadataArrays: Base64[][] = await Promise.all(metadataPromises);
-    const metadataSet: Set<Base64> = new Set(metadataArrays.flat());
+    console.log("Nearest Peers:", nearestPeers);
+    console.log("Metadata:", [...this.metadataCache.values()]);
+    console.log("Storage:", [...this.storageCache.values()]);
 
-    // Fetch all fragments from the metadata set
-    const rawFragments: (string | null)[] = await Promise.all(Array.from(metadataSet).map(this.fetchData.bind(this)));
-    const messageFragments: MessageFragment[] = rawFragments
-      .filter((fragment: string | null) => fragment !== null)
-      .map(MessageProto.tryParse.bind(this))
-      .filter(isMessageFragment);
+    // // Fetch metadata from nearest peers
+    // const metadataPromises: Promise<Base64[]>[] = nearestPeers.map((addr: Address) =>
+    //   this.getRemoteMetadata(peerId, addr)
+    // );
+    // const metadataArrays: Base64[][] = await Promise.all(metadataPromises);
+    // const metadataSet: Set<Base64> = new Set(metadataArrays.flat());
 
-    // Group fragments by their ID
-    const messageMap = messageFragments.reduce((map: Record<Uuid, MessageFragment[]>, fragment: MessageFragment) => {
-      if (map[fragment.id] === undefined) {
-        map[fragment.id] = [];
-      }
-      map[fragment.id]!.push(fragment);
-      return map;
-    }, {});
+    // console.log("Storage:", [...this.storage.values()]);
 
-    // Reconstruct messages from fragments
-    const messages: (string | undefined)[] = await Promise.all(
-      Object.values(messageMap).map((fragments: MessageFragment[]) =>
-        reconstructShamirSecret(fragments.map(({ content }) => content))
-      )
-    );
+    // console.log("Metadata:", [...this.metadata.values()]);
 
-    // TODO: Fix encoding issues. Messages are double JSON encoded
-    return messages
-      .filter((message?: string) => message !== undefined)
-      .map((message: string) => JSON.parse(message) as string)
-      .map((message: string) => JSON.parse(message) as Message);
-  }
+    // // Fetch all fragments from the metadata set
+    // const rawFragments: (string | undefined)[] = await Promise.all(
+    //   Array.from(metadataSet).map(this.fetchData.bind(this))
+    // );
+    // const messageFragments: MessageFragment[] = rawFragments
+    //   .filter((fragment): fragment is string => fragment !== undefined)
+    //   .map(MessageProto.tryParse.bind(this))
+    //   .filter(isMessageFragment);
 
-  private async onStoreMetadataRequest({ detail }: CustomEvent<Parcel<SetMetadataRequest>>): Promise<void> {
-    assert(this.verifyStamp(detail.payload), "Invalid stamp");
-    this.storeMetadataLocally(detail.payload.owner, detail.payload.metadata);
-  }
+    // // Group fragments by their ID
+    // const messageMap = messageFragments.reduce((map: Record<Uuid, MessageFragment[]>, fragment: MessageFragment) => {
+    //   if (map[fragment.id] === undefined) {
+    //     map[fragment.id] = [];
+    //   }
+    //   map[fragment.id]!.push(fragment);
+    //   return map;
+    // }, {});
 
-  private async onGetMetadataRequest({
-    detail,
-  }: CustomEvent<Parcel<GetMetadataRequest>>): Promise<GetMetadataResponse> {
-    assert(this.verifyStamp(detail.payload), "Invalid stamp");
-    assert(detail.payload.address === detail.sender, "Address mismatch in metadata request");
+    // // Reconstruct messages from fragments
+    // const messages: (string | undefined)[] = await Promise.all(
+    //   Object.values(messageMap).map((fragments: MessageFragment[]) =>
+    //     reconstructShamirSecret(fragments.map(({ content }) => content))
+    //   )
+    // );
 
-    const address: Set<Base64> | null = this.metadata.get(detail.payload.address) ?? null;
-    return { metadata: [...(address || [])], type: MessageTypes.GetMetadataResponse };
+    // // TODO: Fix encoding issues. Messages are double JSON encoded
+    // return messages
+    //   .filter((message?: string) => message !== undefined)
+    //   .map((message: string) => JSON.parse(message) as string)
+    //   .map((message: string) => JSON.parse(message) as Message);
+
+    return [];
   }
 
   public async start(): Promise<void> {
     await super.start();
-    this.addEventListener(MessageTypes.SetMetadataRequest, this.onStoreMetadataRequest.bind(this));
-    this.addEventListener(MessageTypes.GetMetadataRequest, this.onGetMetadataRequest.bind(this));
   }
 
   public async stop(): Promise<void> {
     await super.stop();
-    this.removeEventListener(MessageTypes.SetMetadataRequest, this.onStoreMetadataRequest.bind(this));
-    this.removeEventListener(MessageTypes.GetMetadataRequest, this.onGetMetadataRequest.bind(this));
-    this.metadata.clear();
   }
 }

@@ -40,7 +40,7 @@ export function calculateDistance(a: Uint8Array, b: Uint8Array): number {
  * @param candidates - An array of peer identifiers to be ordered by distance.
  * @returns An array of `PeerDistancePair` objects, each containing a peer and its distance to the query, sorted by distance.
  */
-export function orderPeers(query: string, candidates: Address[]): PeerDistancePair[] {
+export function orderPeers(query: Base64, candidates: Address[]): PeerDistancePair[] {
   const key: Uint8Array = blake3(query);
   const distances: PeerDistancePair[] = [];
 

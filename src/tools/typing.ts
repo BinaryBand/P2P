@@ -4,7 +4,7 @@ import { PeerId } from "@libp2p/interface";
 import { BaseTypes } from "../base-proto.js";
 import { HandshakeTypes } from "../handshake-proto.js";
 import { SwarmTypes } from "../swarm-proto.js";
-import { MessageTypes } from "../message-proto.js";
+// import { MessageTypes } from "../message-proto.js";
 import { assert } from "./utils.js";
 
 export type Address = `${Formats.Base58},${string}`;
@@ -56,7 +56,7 @@ function isUuid(uuid: unknown): uuid is Uuid {
 }
 
 export function isMessageFragment(fragment: unknown): fragment is MessageFragment {
-  let control: MessageFragment;
+  let _control: MessageFragment;
   if (
     fragment !== undefined &&
     fragment !== null &&
@@ -66,31 +66,33 @@ export function isMessageFragment(fragment: unknown): fragment is MessageFragmen
     "content" in fragment &&
     isBase64(fragment.content)
   ) {
-    control = { id: fragment.id, content: fragment.content };
+    _control = { id: fragment.id, content: fragment.content };
     return true;
   }
   return false;
 }
 
 export function isMessage(message: unknown): message is Message {
-  if (
-    message !== undefined &&
-    message !== null &&
-    typeof message === "object" &&
-    "sender" in message &&
-    isAddress(message.sender) &&
-    "text" in message &&
-    isBase64(message.text) &&
-    "timestamp" in message &&
-    typeof message.timestamp === "number"
-  ) {
-    const _control: Message = { sender: message.sender, text: message.text, timestamp: message.timestamp };
-    return true;
-  }
-  return false;
+  return typeof message === "string";
+  // if (
+  //   message !== undefined &&
+  //   message !== null &&
+  //   typeof message === "object" &&
+  //   "sender" in message &&
+  //   isAddress(message.sender) &&
+  //   "text" in message &&
+  //   isBase64(message.text) &&
+  //   "timestamp" in message &&
+  //   typeof message.timestamp === "number"
+  // ) {
+  //   const __control: Message = { sender: message.sender, text: message.text, timestamp: message.timestamp };
+  //   return true;
+  // }
+  // return false;
 }
 
 export function isParcel(parcel: unknown): parcel is Parcel<ReqData | Return> {
+  let _control: Parcel<ReqData | Return>;
   if (
     parcel !== undefined &&
     parcel !== null &&
@@ -104,7 +106,7 @@ export function isParcel(parcel: unknown): parcel is Parcel<ReqData | Return> {
     "payload" in parcel &&
     (isRequest(parcel.payload) || isReturn(parcel.payload))
   ) {
-    const _control: Parcel<ReqData | Return> = {
+    _control = {
       callbackId: parcel.callbackId,
       payload: parcel.payload,
       receiver: parcel.receiver,
@@ -120,7 +122,7 @@ export function isRequest(payload: unknown): payload is ReqData {
     return false;
   }
 
-  let control: ReqData;
+  let _control: ReqData;
   switch (payload.type) {
     case HandshakeTypes.InitiationRequest: {
       if (
@@ -129,19 +131,19 @@ export function isRequest(payload: unknown): payload is ReqData {
         "stamp" in payload &&
         isBase64(payload.stamp)
       ) {
-        control = { role: payload.role, stamp: payload.stamp, type: payload.type };
+        _control = { role: payload.role, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
     }
     case HandshakeTypes.PingRequest: {
       if ("stamp" in payload && isBase64(payload.stamp)) {
-        control = { stamp: payload.stamp, type: payload.type };
+        _control = { stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
     }
-    case HandshakeTypes.GetNearestPeersRequest:
+    case HandshakeTypes.GetNeighborsRequest:
       if (
         "n" in payload &&
         typeof payload.n === "number" &&
@@ -152,23 +154,29 @@ export function isRequest(payload: unknown): payload is ReqData {
         "stamp" in payload &&
         isBase64(payload.stamp)
       ) {
-        control = { n: payload.n, role: payload.role, hash: payload.hash, stamp: payload.stamp, type: payload.type };
+        _control = { n: payload.n, role: payload.role, hash: payload.hash, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
-    case SwarmTypes.SetDataFragmentRequest:
-      if ("data" in payload && typeof payload.data === "string" && "stamp" in payload && isBase64(payload.stamp)) {
-        control = { data: payload.data, stamp: payload.stamp, type: payload.type };
+    case SwarmTypes.SetFragmentsRequest:
+      if ("fragments" in payload && Array.isArray(payload.fragments) && "stamp" in payload && isBase64(payload.stamp)) {
+        _control = { fragments: payload.fragments, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
-    case SwarmTypes.GetDataFragmentRequest:
-      if ("hash" in payload && isBase64(payload.hash) && "stamp" in payload && isBase64(payload.stamp)) {
-        control = { hash: payload.hash, stamp: payload.stamp, type: payload.type };
+    case SwarmTypes.GetFragmentsRequest:
+      if (
+        "hashes" in payload &&
+        Array.isArray(payload.hashes) &&
+        payload.hashes.every(isBase64) &&
+        "stamp" in payload &&
+        isBase64(payload.stamp)
+      ) {
+        _control = { hashes: payload.hashes, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
-    case MessageTypes.SetMetadataRequest:
+    case SwarmTypes.SetMetadataRequest:
       if (
         "owner" in payload &&
         isAddress(payload.owner) &&
@@ -178,19 +186,19 @@ export function isRequest(payload: unknown): payload is ReqData {
         "stamp" in payload &&
         isBase64(payload.stamp)
       ) {
-        control = { owner: payload.owner, metadata: payload.metadata, stamp: payload.stamp, type: payload.type };
+        _control = { owner: payload.owner, metadata: payload.metadata, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
-    case MessageTypes.GetMetadataRequest:
+    case SwarmTypes.GetMetadataRequest:
       if (
-        "address" in payload &&
-        isAddress(payload.address) &&
+        "owner" in payload &&
+        isAddress(payload.owner) &&
         "stamp" in payload &&
         isBase64(payload.stamp) &&
-        payload.type === MessageTypes.GetMetadataRequest
+        payload.type === SwarmTypes.GetMetadataRequest
       ) {
-        control = { address: payload.address, stamp: payload.stamp, type: payload.type };
+        _control = { owner: payload.owner, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
@@ -225,32 +233,36 @@ function isResponse(response: unknown): response is ResData {
     return false;
   }
 
-  let control: ResData;
+  let _control: ResData;
   switch (response.type) {
     case BaseTypes.EmptyResponse:
-      control = { type: response.type };
+      _control = { type: response.type };
       return true;
     case HandshakeTypes.PingResponse:
       if ("role" in response && (response.role === "phone" || response.role === "tower")) {
-        control = { role: response.role, type: response.type };
+        _control = { role: response.role, type: response.type };
         return true;
       }
       break;
-    case HandshakeTypes.GetNearestPeersResponse:
+    case HandshakeTypes.GetNeighborsResponse:
       if ("peers" in response && Array.isArray(response.peers) && response.peers.every(isAddress)) {
-        control = { peers: response.peers, type: response.type };
+        _control = { peers: response.peers, type: response.type };
         return true;
       }
       break;
-    case SwarmTypes.GetDataFragmentResponse:
-      if ("fragment" in response && (typeof response.fragment === "string" || response.fragment === null)) {
-        control = { fragment: response.fragment, type: response.type };
+    case SwarmTypes.GetFragmentsResponse:
+      if (
+        "fragments" in response &&
+        Array.isArray(response.fragments) &&
+        response.fragments.every((frag) => typeof frag === "string")
+      ) {
+        _control = { fragments: response.fragments, type: response.type };
         return true;
       }
       break;
-    case MessageTypes.GetMetadataResponse:
+    case SwarmTypes.GetMetadataResponse:
       if ("metadata" in response && Array.isArray(response.metadata) && response.metadata.every(isBase64)) {
-        control = { metadata: response.metadata, type: response.type };
+        _control = { metadata: response.metadata, type: response.type };
         return true;
       }
       break;

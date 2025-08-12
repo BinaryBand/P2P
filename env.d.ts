@@ -31,22 +31,22 @@ interface PingResponse {
   type: import("./src/handshake-proto").HandshakeTypes.PingResponse;
 }
 
-interface GetNearestPeersResponse {
+interface GetNeighborsResponse {
   peers: Address[];
-  type: import("./src/handshake-proto").HandshakeTypes.GetNearestPeersResponse;
-}
-
-interface GetDataFragmentResponse {
-  fragment: string | null;
-  type: import("./src/swarm-proto").SwarmTypes.GetDataFragmentResponse;
+  type: import("./src/handshake-proto").HandshakeTypes.GetNeighborsResponse;
 }
 
 interface GetMetadataResponse {
   metadata: Base64[];
-  type: import("./src/message-proto").MessageTypes.GetMetadataResponse;
+  type: import("./src/swarm-proto").SwarmTypes.GetMetadataResponse;
 }
 
-type ResData = EmptyResponse | PingResponse | GetNearestPeersResponse | GetDataFragmentResponse | GetMetadataResponse;
+interface GetFragmentsResponse {
+  fragments: string[];
+  type: import("./src/swarm-proto").SwarmTypes.GetFragmentsResponse;
+}
+
+type ResData = EmptyResponse | PingResponse | GetNeighborsResponse | GetMetadataResponse | GetFragmentsResponse;
 
 interface InitiationRequest {
   role: Role;
@@ -59,47 +59,47 @@ interface PingRequest {
   type: import("./src/handshake-proto").HandshakeTypes.PingRequest;
 }
 
-interface GetNearestPeersRequest {
+interface GetNeighborsRequest {
   n: number;
   hash: Base64;
   role: Role;
   stamp: Base64;
-  type: import("./src/handshake-proto").HandshakeTypes.GetNearestPeersRequest;
-}
-
-interface SetDataFragmentRequest {
-  data: string;
-  stamp: Base64;
-  type: import("./src/swarm-proto").SwarmTypes.SetDataFragmentRequest;
-}
-
-interface GetDataFragmentRequest {
-  hash: Base64;
-  stamp: Base64;
-  type: import("./src/swarm-proto").SwarmTypes.GetDataFragmentRequest;
+  type: import("./src/handshake-proto").HandshakeTypes.GetNeighborsRequest;
 }
 
 interface SetMetadataRequest {
   owner: Address;
   metadata: Base64[];
   stamp: Base64;
-  type: import("./src/message-proto").MessageTypes.SetMetadataRequest;
+  type: import("./src/swarm-proto").SwarmTypes.SetMetadataRequest;
 }
 
 interface GetMetadataRequest {
-  address: Address;
+  owner: Address;
   stamp: Base64;
-  type: import("./src/message-proto").MessageTypes.GetMetadataRequest;
+  type: import("./src/swarm-proto").SwarmTypes.GetMetadataRequest;
+}
+
+interface SetFragmentsRequest {
+  fragments: string[];
+  stamp: Base64;
+  type: import("./src/swarm-proto").SwarmTypes.SetFragmentsRequest;
+}
+
+interface GetFragmentsRequest {
+  hashes: Base64[];
+  stamp: Base64;
+  type: import("./src/swarm-proto").SwarmTypes.GetFragmentsRequest;
 }
 
 type ReqData =
   | InitiationRequest
   | PingRequest
-  | GetNearestPeersRequest
-  | SetDataFragmentRequest
-  | GetDataFragmentRequest
+  | GetNeighborsRequest
   | SetMetadataRequest
-  | GetMetadataRequest;
+  | GetMetadataRequest
+  | SetFragmentsRequest
+  | GetFragmentsRequest;
 
 interface Parcel<T extends ReqData | Return> {
   callbackId: Uuid;
@@ -115,23 +115,13 @@ interface PeerDistancePair {
   distance: number;
 }
 
-interface StorageItem {
-  data: string;
-  hash: Base64;
-  timestamp: number;
-}
-
 type ProtocolEvents = Record<string, CustomEvent<Parcel<ReqData>>>;
 
 type AsyncIsh<T, U> = (evt: T) => void | U | Promise<void | U>;
 
-type Message = {
-  sender: Address;
-  text: string;
-  timestamp: number;
-};
+type Message = string;
 
 type MessageFragment = {
   id: Uuid;
-  content: Base64;
+  content: string;
 };

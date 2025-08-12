@@ -6,7 +6,7 @@ import { Uint8ArrayList } from "uint8arraylist";
 import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
-import { decode, bytesToBase64, isParcel, isReturn, isRequest, encodePeerId, decodeAddress } from "./tools/typing.js";
+import { bytesToBase64, isParcel, isReturn, isRequest, encodePeerId, decodeAddress } from "./tools/typing.js";
 import { totp } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
@@ -17,7 +17,6 @@ export enum BaseTypes {
 
 export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitter<T> {
   public static readonly PROTOCOL: string = "/secret-handshake/proto/0.6.0";
-  private static readonly MAX_CALLBACKS: number = 128; // max callbacks to keep in memory
   private static readonly CALLBACK_TIMEOUT: number = 30_000; // 30 seconds until callback request expires
   private static readonly RATE_LIMIT: number = 300; // max requests per 30 seconds
 
@@ -33,10 +32,9 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     return encodePeerId(this.peerId);
   }
 
-  private callbackQueue = new LRUCache<Uuid, Callback>({
-    max: BaseProto.MAX_CALLBACKS,
-    ttl: BaseProto.CALLBACK_TIMEOUT,
-  });
+  private callbackMap = new Map<Uuid, Callback>();
+
+  private connectionCache = new LRUCache<PeerId, Connection>({ max: 256 });
   private rateLimitCache = new LRUCache<Base64, number>({ max: 2048, ttl: BaseProto.CALLBACK_TIMEOUT });
 
   constructor(components: Components) {
@@ -47,30 +45,39 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     this.registrar = components.registrar;
   }
 
-  private static byteArrayToString(byteArray: Uint8Array[]): string {
-    const combined: Uint8Array = new Uint8Array(byteArray.reduce((acc, val) => acc + val.length, 0));
-    let offset: number = 0;
-    for (const chunk of byteArray) {
-      combined.set(chunk, offset);
-      offset += chunk.length;
+  private async getConnection(peerId: PeerId): Promise<Connection> {
+    const existingConnection: Connection | undefined = this.connectionCache.get(peerId);
+    if (existingConnection !== undefined) {
+      if (existingConnection.status === "open" && existingConnection.direction === "outbound") {
+        return Promise.resolve(existingConnection);
+      } else {
+        this.connectionCache.delete(peerId);
+      }
     }
-    return decode(combined);
+
+    const newConnection: Connection = await this.connectionManager.openConnection(peerId);
+    this.connectionCache.set(peerId, newConnection);
+    return newConnection;
   }
 
   private static async decodeStream(stream: Stream): Promise<string> {
-    const chunks: Uint8Array[] = [];
+    const decoder = new TextDecoder("utf-8");
+    let result: string = "";
+
     await pipe(stream, async (source: AsyncGenerator<Uint8ArrayList>) => {
       for await (const data of source) {
-        chunks.push(...Array.from(data));
+        result += decoder.decode(data.subarray(), { stream: true });
       }
     });
-    return BaseProto.byteArrayToString(chunks);
+
+    result += decoder.decode(); // Flush any remaining data
+    return result;
   }
 
   private async sendParcelNoCallback<T extends ReqData | Return>(parcel: Parcel<T>): Promise<void> {
     const peerId: PeerId = decodeAddress(parcel.receiver);
 
-    const connection: Connection = await this.connectionManager.openConnection(peerId);
+    const connection: Connection = await this.getConnection(peerId);
     const outgoing: Stream = await connection.newStream(BaseProto.PROTOCOL);
     try {
       const parcelString: string = JSON.stringify(parcel);
@@ -81,22 +88,39 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     }
   }
 
-  private async sendParcel<T extends ReqData, U extends ResData>(parcel: Parcel<T>): Promise<Return<U>> {
-    await this.sendParcelNoCallback(parcel);
+  protected async getWithTimeout<T>(promise: Promise<T>, delay: number): Promise<T> {
+    let timer: NodeJS.Timeout;
+    const timeoutPromise = new Promise<T>((_, reject) => {
+      timer = setTimeout(() => {
+        const message: string = "Timeout while waiting for response";
+        reject({ success: false, message });
+      }, delay);
+    });
 
-    // Wait for the response
-    return new Promise<Return<U>>((res: Callback<U>): void => {
-      const timeOut: NodeJS.Timeout = setTimeout((): void => {
-        const message: string = `Timeout while waiting for response from: ${parcel.receiver}`;
-        res({ success: false, message });
-      }, BaseProto.CALLBACK_TIMEOUT);
+    return Promise.race([promise, timeoutPromise]).then((t: T) => {
+      clearTimeout(timer);
+      return t;
+    });
+  }
 
-      // Open a callback for the response
-      this.callbackQueue.set(parcel.callbackId, (val: Return): void => {
-        timeOut.close();
-        this.callbackQueue.delete(parcel.callbackId);
-        res(val as Return<U>);
+  private async registerCallback<T extends ReqData, U extends ResData>(
+    parcel: Parcel<T>,
+    delay: number = BaseProto.CALLBACK_TIMEOUT
+  ): Promise<Return<U>> {
+    // Create a promise that resolves when the response is received
+    const responsePromise = new Promise<Return<U>>((resolve) => {
+      this.callbackMap.set(parcel.callbackId, (val: Return) => {
+        this.callbackMap.delete(parcel.callbackId);
+        resolve(val as Return<U>);
       });
+    });
+
+    return this.getWithTimeout(responsePromise, delay);
+  }
+
+  private async sendParcel<T extends ReqData, U extends ResData>(parcel: Parcel<T>): Promise<Return<U>> {
+    return this.sendParcelNoCallback(parcel).then(() => {
+      return this.registerCallback(parcel, BaseProto.CALLBACK_TIMEOUT);
     });
   }
 
@@ -124,8 +148,14 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     const timedFingerprint: Uint8Array = totp(peerId.toCID().bytes);
     const key: Base64 = bytesToBase64(timedFingerprint);
     const rateCount: number = (this.rateLimitCache.get(key) ?? 0) + 1;
+
+    // Early exit if limit exceeded
+    if (rateCount > BaseProto.RATE_LIMIT) {
+      return true;
+    }
+
     this.rateLimitCache.set(key, rateCount);
-    return BaseProto.RATE_LIMIT < rateCount;
+    return false;
   }
 
   private static parseParcel<T extends ReqData>(rawMessage: string): Parcel<T> | null {
@@ -163,8 +193,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
       assert(encodePeerId(connection.remotePeer) === detail.sender, `${connection.remotePeer} !== ${detail.sender}`);
 
       // If this is a callback response, invoke the callback instead of treating it like a new event
-      if (this.callbackQueue.has(detail.callbackId) && isReturn(detail.payload)) {
-        this.callbackQueue.get(detail.callbackId)!(detail.payload);
+      if (this.callbackMap.has(detail.callbackId) && isReturn(detail.payload)) {
+        this.callbackMap.get(detail.callbackId)!(detail.payload);
       }
 
       // If this is a new payload, pass it to the event handler
@@ -208,11 +238,9 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
         returnParcel = { callbackId: event.detail.callbackId, payload, receiver, sender };
       }
 
-      try {
-        this.sendParcelNoCallback(returnParcel);
-      } catch (err) {
+      this.sendParcelNoCallback(returnParcel).catch((err) => {
         console.error("Error sending parcel:", err);
-      }
+      });
     };
 
     super.addEventListener(type, eventWrapper);
@@ -224,6 +252,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
 
   public async stop(): Promise<void> {
     await this.registrar.unhandle(BaseProto.PROTOCOL);
-    this.callbackQueue.clear();
+    this.callbackMap.clear();
+    this.connectionCache.clear();
+    this.rateLimitCache.clear();
   }
 }
