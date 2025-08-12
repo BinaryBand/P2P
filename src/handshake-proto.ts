@@ -19,7 +19,7 @@ export enum HandshakeTypes {
   PingRequest = "handshake:ping-request",
   PingResponse = "handshake:ping-response",
   GetNeighborsRequest = "handshake:get-neighbors-request",
-  GetNeighborsResponse = "handshake:neighbors-response",
+  GetNeighborsResponse = "handshake:get-neighbors-response",
 }
 
 export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto<T> {
@@ -51,8 +51,9 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     return (params: Components) => new HandshakeProto(params, passphrase);
   }
 
-  public async getAllPeers(): Promise<Address[]> {
-    const nearestPeers: Address[] = await this.getNearestPeers("query", 10, this.role);
+  public async getNeighbors(n: number = 10, role?: Role): Promise<Address[]> {
+    const addressHash: Base64 = bytesToBase64(blake3(this.address));
+    const nearestPeers: Address[] = await this.getNearestPeers(addressHash, n, role ?? this.role);
     return nearestPeers;
   }
 
@@ -133,7 +134,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     return distances.slice(0, n);
   }
 
-  private getNearestLocalPeers(hash: Base64, n: number): Address[] {
+  protected getNearestLocalPeers(hash: Base64, n: number): Address[] {
     return this.getNearestLocalPairs(hash, n).map(({ peer }) => peer);
   }
 
@@ -176,7 +177,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
    * @param n - The maximum number of nearest peers to return. Defaults to 3.
    * @returns A promise that resolves to an array of the nearest peer addresses.
    */
-  protected async getNearestPeers(query: string, n: number, role: Role): Promise<Address[]> {
+  protected async getNearestPeers(query: Base64, n: number, role: Role): Promise<Address[]> {
     const hash: Base64 = HandshakeProto.hashFromData(query);
     let peers: PeerDistancePair[] = this.getNearestLocalPairs(hash, n);
 
@@ -206,15 +207,6 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     }
 
     return peers.map((pair: PeerDistancePair) => pair.peer).slice(0, n);
-  }
-
-  protected changePeerRole(peerId: PeerId, role: Role): void {
-    const address: Address = encodePeerId(peerId);
-    const peerData: PeerData | undefined = this.peersCache.get(address);
-    if (peerData !== undefined) {
-      peerData.role = role;
-      this.peersCache.set(address, peerData);
-    }
   }
 
   private addPeer(peerId: PeerId, role: Role): void {
@@ -272,11 +264,16 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     return age > HandshakeProto.PEER_FRESHNESS_THRESHOLD;
   }
 
-  private auditPeers(): void {
-    Array.from(this.peersCache.entries()).forEach(([_addr, { peerId }]) => {
-      if (this.peerIsStale(peerId)) {
-        this.requestPulse(peerId);
-      }
+  private async auditPeers(): Promise<void> {
+    const auditingPeers: PeerId[] = Array.from(this.peersCache.entries())
+      .filter(([_addr, { peerId }]) => this.peerIsStale(peerId))
+      .map(([addr]) => decodeAddress(addr));
+
+    await Promise.all(auditingPeers.map((peer) => this.requestPulse(peer)));
+
+    (await this.getNeighbors(5, "tower")).forEach((neighbor: Address) => {
+      const peerId: PeerId = decodeAddress(neighbor);
+      this.addPeer(peerId, "tower");
     });
   }
 

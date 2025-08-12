@@ -68,14 +68,14 @@ interface GetNeighborsRequest {
 }
 
 interface SetMetadataRequest {
-  owner: Address;
+  hashKey: Base64;
   metadata: Base64[];
   stamp: Base64;
   type: import("./src/swarm-proto").SwarmTypes.SetMetadataRequest;
 }
 
 interface GetMetadataRequest {
-  owner: Address;
+  hashKey: Base64;
   stamp: Base64;
   type: import("./src/swarm-proto").SwarmTypes.GetMetadataRequest;
 }

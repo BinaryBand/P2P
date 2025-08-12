@@ -20,7 +20,7 @@ export const encode = TextEncoder.prototype.encode.bind(new TextEncoder());
 
 const BASE64_REGEX: RegExp = new RegExp(`^${Formats.Base64},([a-zA-Z0-9+/]+={0,2})$`);
 
-function isBase64(input: unknown): input is Base64 {
+export function isBase64(input: unknown): input is Base64 {
   return typeof input === "string" && BASE64_REGEX.test(input);
 }
 
@@ -178,27 +178,27 @@ export function isRequest(payload: unknown): payload is ReqData {
       break;
     case SwarmTypes.SetMetadataRequest:
       if (
-        "owner" in payload &&
-        isAddress(payload.owner) &&
+        "hashKey" in payload &&
+        isBase64(payload.hashKey) &&
         "metadata" in payload &&
         Array.isArray(payload.metadata) &&
         payload.metadata.every(isBase64) &&
         "stamp" in payload &&
         isBase64(payload.stamp)
       ) {
-        _control = { owner: payload.owner, metadata: payload.metadata, stamp: payload.stamp, type: payload.type };
+        _control = { hashKey: payload.hashKey, metadata: payload.metadata, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;
     case SwarmTypes.GetMetadataRequest:
       if (
-        "owner" in payload &&
-        isAddress(payload.owner) &&
+        "hashKey" in payload &&
+        isBase64(payload.hashKey) &&
         "stamp" in payload &&
         isBase64(payload.stamp) &&
         payload.type === SwarmTypes.GetMetadataRequest
       ) {
-        _control = { owner: payload.owner, stamp: payload.stamp, type: payload.type };
+        _control = { hashKey: payload.hashKey, stamp: payload.stamp, type: payload.type };
         return true;
       }
       break;

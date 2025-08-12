@@ -16,8 +16,8 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
   private static readonly SHAMIR_SHARES: number = 5;
   private static readonly SHAMIR_THRESHOLD: number = 3;
 
-  constructor(components: Components, passphrase?: string, role: Role = "tower") {
-    super(components, passphrase, role);
+  constructor(components: Components, passphrase?: string) {
+    super(components, passphrase);
   }
 
   public static Message<T extends MessageEvents>(passphrase?: string): (params: Components) => MessageProto<T> {
@@ -47,68 +47,23 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     await this.storeMetadata(address, hashes.flat());
   }
 
-  // private static tryParse<T>(rawString: string): T | undefined {
-  //   try {
-  //     const result: T = JSON.parse(rawString);
-  //     return result;
-  //   } catch {}
-  //   return undefined;
-  // }
+  private static tryParse<T>(rawString: string): T | undefined {
+    try {
+      const result: T = JSON.parse(rawString);
+      return result;
+    } catch {}
+    return undefined;
+  }
 
-  public async getInbox(peerId: PeerId): Promise<Message[]> {
+  public async getInbox(peerId: PeerId): Promise<MessageFragment[]> {
     console.log("Get Inbox");
 
     const recipient: Address = encodePeerId(peerId);
-    const ownerHash: Base64 = bytesToBase64(blake3(recipient));
-    const nearestPeers: Address[] = await this.getNearestPeers(ownerHash, MessageProto.METADATA_SWARM_SIZE, "tower");
+    const hashes: Base64[] = await this.fetchMetadata(recipient);
+    const fragmentStrings: string[] = await this.fetchFragments(hashes);
 
-    console.log("Nearest Peers:", nearestPeers);
-    console.log("Metadata:", [...this.metadataCache.values()]);
-    console.log("Storage:", [...this.storageCache.values()]);
-
-    // // Fetch metadata from nearest peers
-    // const metadataPromises: Promise<Base64[]>[] = nearestPeers.map((addr: Address) =>
-    //   this.getRemoteMetadata(peerId, addr)
-    // );
-    // const metadataArrays: Base64[][] = await Promise.all(metadataPromises);
-    // const metadataSet: Set<Base64> = new Set(metadataArrays.flat());
-
-    // console.log("Storage:", [...this.storage.values()]);
-
-    // console.log("Metadata:", [...this.metadata.values()]);
-
-    // // Fetch all fragments from the metadata set
-    // const rawFragments: (string | undefined)[] = await Promise.all(
-    //   Array.from(metadataSet).map(this.fetchData.bind(this))
-    // );
-    // const messageFragments: MessageFragment[] = rawFragments
-    //   .filter((fragment): fragment is string => fragment !== undefined)
-    //   .map(MessageProto.tryParse.bind(this))
-    //   .filter(isMessageFragment);
-
-    // // Group fragments by their ID
-    // const messageMap = messageFragments.reduce((map: Record<Uuid, MessageFragment[]>, fragment: MessageFragment) => {
-    //   if (map[fragment.id] === undefined) {
-    //     map[fragment.id] = [];
-    //   }
-    //   map[fragment.id]!.push(fragment);
-    //   return map;
-    // }, {});
-
-    // // Reconstruct messages from fragments
-    // const messages: (string | undefined)[] = await Promise.all(
-    //   Object.values(messageMap).map((fragments: MessageFragment[]) =>
-    //     reconstructShamirSecret(fragments.map(({ content }) => content))
-    //   )
-    // );
-
-    // // TODO: Fix encoding issues. Messages are double JSON encoded
-    // return messages
-    //   .filter((message?: string) => message !== undefined)
-    //   .map((message: string) => JSON.parse(message) as string)
-    //   .map((message: string) => JSON.parse(message) as Message);
-
-    return [];
+    const fragments: MessageFragment[] = fragmentStrings.map(MessageProto.tryParse).filter(isMessageFragment);
+    return fragments;
   }
 
   public async start(): Promise<void> {

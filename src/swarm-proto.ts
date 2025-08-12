@@ -3,7 +3,7 @@ import { PeerId } from "@libp2p/interface";
 import { LRUCache } from "lru-cache";
 
 import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
-import { bytesToBase64, decodeAddress } from "./tools/typing.js";
+import { bytesToBase64, decodeAddress, isAddress, isBase64 } from "./tools/typing.js";
 import { blake3 } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
@@ -36,14 +36,15 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   private static readonly MAX_STORAGE_CACHE_SIZE: number = 2048;
   private static readonly LIGHT_AUDIT_INTERVAL: number = 60_000; // 1 minute
   private static readonly LIGHT_FRESHNESS_THRESHOLD: number = 180_000; // 3 minutes
+  private static readonly RANDOM_AUDITING_NET_SIZE: number = 10;
 
   private lightAuditTimer: NodeJS.Timeout | null = null;
 
-  protected metadataCache: LRUCache<Address, Set<Base64>> = new LRUCache({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
+  protected metadataCache: LRUCache<Base64, Set<Base64>> = new LRUCache({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
   protected storageCache: LRUCache<Base64, DataFragment> = new LRUCache({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
 
-  constructor(components: Components, passphrase?: string, role: Role = "tower") {
-    super(components, passphrase, role);
+  constructor(components: Components, passphrase?: string) {
+    super(components, passphrase, "tower");
   }
 
   public static Swarm<T extends SwarmEvents>(passphrase?: string): (params: Components) => SwarmProto<T> {
@@ -54,24 +55,24 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return fragment !== undefined && HandshakeProto.hashFromData(fragment) === hash;
   }
 
-  private storeMetadataLocally(owner: Address, metadata: Base64[]): void {
-    if (this.metadataCache.has(owner)) {
-      const existingHashes: Set<Base64> = this.metadataCache.get(owner)!;
+  private storeMetadataLocally(key: Base64, metadata: Base64[]): void {
+    if (this.metadataCache.has(key)) {
+      const existingHashes: Set<Base64> = this.metadataCache.get(key)!;
       metadata.forEach((hash: Base64) => existingHashes.add(hash));
     } else {
-      this.metadataCache.set(owner, new Set(metadata));
+      this.metadataCache.set(key, new Set(metadata));
     }
   }
 
-  private async storeMetadataRemotely(holder: Address, owner: Address, metadata: Base64[]): Promise<boolean> {
+  private async storeMetadataRemotely(holder: Address, hashKey: Base64, metadata: Base64[]): Promise<boolean> {
     if (this.address === holder) {
-      this.storeMetadataLocally(owner, metadata);
+      this.storeMetadataLocally(hashKey, metadata);
       return true;
     }
 
     try {
       const peerId: PeerId = decodeAddress(holder);
-      const request: SetMetadataRequest = this.stampRequest({ owner, metadata, type: SwarmTypes.SetMetadataRequest });
+      const request: SetMetadataRequest = this.stampRequest({ hashKey, metadata, type: SwarmTypes.SetMetadataRequest });
       await this.sendRequest(peerId, request);
       return true;
     } catch (err) {
@@ -80,21 +81,18 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     }
   }
 
-  private getLocalMetadata(owner: Address): Base64[] {
-    if (this.metadataCache.has(owner)) {
-      return Array.from(this.metadataCache.get(owner)!);
-    }
-    return [];
+  private getLocalMetadata(hashKey: Base64): Base64[] {
+    return Array.from(this.metadataCache.get(hashKey) ?? []);
   }
 
-  private async getRemoteMetadata(holder: Address, owner: Address): Promise<Base64[]> {
+  private async getRemoteMetadata(holder: Address, hashKey: Base64): Promise<Base64[]> {
     if (this.address === holder) {
-      return this.getLocalMetadata(owner);
+      return this.getLocalMetadata(hashKey);
     }
 
     try {
       const peerId: PeerId = decodeAddress(holder);
-      const request: GetMetadataRequest = this.stampRequest({ owner, type: SwarmTypes.GetMetadataRequest });
+      const request: GetMetadataRequest = this.stampRequest({ hashKey, type: SwarmTypes.GetMetadataRequest });
       const response: Return<GetMetadataResponse> = await this.sendRequest(peerId, request);
       assert(response.success, `Failed to get metadata from ${peerId}`);
 
@@ -114,8 +112,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
    */
   protected async storeMetadata(owner: Address, hashes: Base64[]): Promise<void> {
     const ownerHash: Base64 = bytesToBase64(blake3(owner));
-    const nearestPeers: Address[] = await this.getNearestPeers(ownerHash, SwarmProto.SWARM_SIZE, "tower");
-    nearestPeers.map((addr: Address) => this.storeMetadataRemotely(addr, owner, hashes));
+    const candidates: Address[] = await this.getNearestPeers(ownerHash, SwarmProto.SWARM_SIZE, "tower");
+    candidates.map((addr: Address) => this.storeMetadataRemotely(addr, ownerHash, hashes));
   }
 
   /**
@@ -131,35 +129,34 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     const ownerHash: Base64 = bytesToBase64(blake3(owner));
 
     const candidates: Address[] = await this.getNearestPeers(ownerHash, SwarmProto.SWARM_SIZE, "tower");
-    const promises: Promise<Base64[]>[] = candidates.flatMap((addr: Address) => this.getRemoteMetadata(addr, owner));
+    const promises: Promise<Base64[]>[] = candidates.flatMap((addr: Address) =>
+      this.getRemoteMetadata(addr, ownerHash)
+    );
     const results: Base64[][] = await Promise.all(promises);
     const metadata: Base64[] = Array.from(new Set(results.flat()));
 
     return metadata;
   }
 
-  private storeFragmentsLocally(data: string): Base64 {
-    const hash: Base64 = SwarmProto.hashFromData(data);
-    const timestamp: number = Date.now();
-    const fragment: DataFragment = { data, hash, timestamp };
-    this.storageCache.set(hash, fragment);
-    return hash;
+  private storeFragmentsLocally(fragments: string[]): Base64[] {
+    return fragments.map((fragment) => {
+      const hash: Base64 = SwarmProto.hashFromData(fragment);
+      const timestamp: number = Date.now();
+      const dataFragment: DataFragment = { data: fragment, hash, timestamp };
+      this.storageCache.set(hash, dataFragment);
+      return hash;
+    });
   }
 
   private async storeFragmentsRemotely(address: Address, fragments: string[]): Promise<boolean> {
-    const timestamp: number = Date.now();
-
     if (this.address === address) {
-      fragments.forEach(this.storeFragmentsLocally.bind(this));
+      this.storeFragmentsLocally(fragments);
       return true;
     }
 
     try {
       const peerId: PeerId = decodeAddress(address);
-      const request: SetFragmentsRequest = this.stampRequest({
-        fragments,
-        type: SwarmTypes.SetFragmentsRequest,
-      });
+      const request: SetFragmentsRequest = this.stampRequest({ fragments, type: SwarmTypes.SetFragmentsRequest });
       await this.sendRequest(peerId, request);
       return true;
     } catch (err) {
@@ -243,21 +240,22 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
   private async onSetMetadataRequest({ detail }: CustomEvent<Parcel<SetMetadataRequest>>): Promise<void> {
     assert(this.verifyStamp(detail.payload), "Invalid stamp");
-    this.storeMetadataLocally(detail.payload.owner, detail.payload.metadata);
+
+    this.storeMetadataLocally(detail.payload.hashKey, detail.payload.metadata);
   }
 
   private async onGetMetadataRequest({
     detail,
   }: CustomEvent<Parcel<GetMetadataRequest>>): Promise<GetMetadataResponse> {
     assert(this.verifyStamp(detail.payload), "Invalid stamp");
-    assert(detail.payload.owner === detail.sender, "Address mismatch in metadata request");
-    const address: Set<Base64> | null = this.metadataCache.get(detail.payload.owner) ?? null;
+
+    const address: Set<Base64> | null = this.metadataCache.get(detail.payload.hashKey) ?? null;
     return { metadata: [...(address || [])], type: SwarmTypes.GetMetadataResponse };
   }
 
   private onSetFragmentsRequest({ detail }: CustomEvent<Parcel<SetFragmentsRequest>>): void {
     assert(this.verifyStamp(detail.payload), "Invalid stamp");
-    detail.payload.fragments.forEach(this.storeFragmentsLocally.bind(this));
+    this.storeFragmentsLocally(detail.payload.fragments);
   }
 
   private onGetFragmentsRequest({ detail }: CustomEvent<Parcel<GetFragmentsRequest>>): GetFragmentsResponse {
@@ -266,14 +264,51 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return { fragments, type: SwarmTypes.GetFragmentsResponse };
   }
 
-  private async lightAudit(): Promise<void> {
-    // Check for stale fragments
-    Array.from(this.storageCache.values())
-      .filter(({ timestamp }: DataFragment) => timestamp + SwarmProto.LIGHT_FRESHNESS_THRESHOLD < Date.now())
-      .forEach(async ({ data, hash }: DataFragment) => {
-        const cellTowers: Address[] = await this.getNearestPeers(hash, SwarmProto.SWARM_SIZE, "tower");
-        cellTowers.forEach((addr: Address) => this.storeFragmentsRemotely(addr, [data]));
+  // Ensure your peers' metadata stays up-to-date
+  private hydrateMetadata(): void {
+    const keys: Base64[] = Array.from(this.metadataCache.keys());
+    const randomKeys: Base64[] = keys.sort(() => Math.random() - 0.5).slice(0, SwarmProto.RANDOM_AUDITING_NET_SIZE);
+
+    randomKeys.forEach((randomKey: Base64): void => {
+      const values: Base64[] = Array.from(this.metadataCache.get(randomKey) || []);
+      const nearestPeers: Address[] = this.getNearestLocalPeers(randomKey, SwarmProto.SWARM_SIZE);
+      nearestPeers.forEach((holder: Address): void => {
+        this.storeMetadataRemotely(holder, randomKey, values);
       });
+    });
+  }
+
+  private hydrateStorage(): void {
+    // Only update stale fragments that are in the cache
+    const now: number = Date.now();
+    const staleFragments = Array.from(this.storageCache.values())
+      .filter(({ timestamp }) => timestamp + SwarmProto.LIGHT_FRESHNESS_THRESHOLD < now)
+      .sort(() => Math.random() - 0.5)
+      .slice(0, SwarmProto.RANDOM_AUDITING_NET_SIZE);
+
+    // Map each stale fragment to its nearest local peers
+    const storageHydrationMap: Map<Address, Set<string>> = new Map();
+    staleFragments.forEach(({ data, hash }: DataFragment) => {
+      const localSwarm: Address[] = this.getNearestLocalPeers(hash, SwarmProto.SWARM_SIZE);
+      localSwarm.forEach((addr: Address): void => {
+        if (!storageHydrationMap.has(addr)) {
+          storageHydrationMap.set(addr, new Set());
+        }
+
+        storageHydrationMap.get(addr)!.add(data);
+      });
+    });
+
+    // Hydrate stale fragments from local peers
+    for (const [addr, dataSet] of storageHydrationMap.entries()) {
+      const dataArray: string[] = Array.from(dataSet);
+      this.storeFragmentsRemotely(addr, dataArray);
+    }
+  }
+
+  private async lightAudit(): Promise<void> {
+    this.hydrateMetadata();
+    this.hydrateStorage();
   }
 
   public async start(): Promise<void> {

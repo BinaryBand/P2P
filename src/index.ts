@@ -106,7 +106,7 @@ async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void
 async function sendMessage(client: ClientNode, recipient: PeerId, messages: string[]): Promise<void> {
   assert(client.services.proto, "Message service not initialized");
   assert(isAddress(encodePeerId(recipient)), "Invalid recipient address");
-  assert((await client.services.proto.getAllPeers()).length !== 0, "Recipient not connected");
+  assert((await client.services.proto.getNeighbors()).length !== 0, "Recipient not connected");
 
   console.log("Sending message to:", recipient);
   await client.services.proto.sendMessages(recipient, messages);
@@ -159,7 +159,7 @@ async function main(): Promise<void> {
           await bootstrapClient(client, bootstrapPeerId);
           break;
         case "pool":
-          const pool: Address[] = await client.services.proto.getAllPeers();
+          const pool: Address[] = await client.services.proto.getNeighbors();
           console.log("Connected peers:", pool);
           break;
         case "send":
@@ -170,7 +170,7 @@ async function main(): Promise<void> {
           await sendMessage(client, recipient, [message]);
           break;
         case "inbox":
-          const inbox: Message[] = await client.services.proto.getInbox(client.peerId);
+          const inbox: MessageFragment[] = await client.services.proto.getInbox(client.peerId);
           console.log("Inbox messages:", inbox);
           break;
         case "exit":
