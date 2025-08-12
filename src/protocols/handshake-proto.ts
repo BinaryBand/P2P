@@ -2,10 +2,10 @@ import { IdentifyResult, Libp2pEvents, PeerId, TypedEventTarget } from "@libp2p/
 import { Components } from "libp2p/dist/src/components";
 import { LRUCache } from "lru-cache";
 
-import { bytesToBase64, decodeAddress, encode, encodePeerId } from "./tools/typing.js";
-import { blake2b, blake3, totp } from "./tools/cryptography.js";
-import { orderPeers } from "./tools/routing.js";
-import { assert } from "./tools/utils.js";
+import { bytesToBase64, decodeAddress, encode, encodePeerId } from "../tools/typing.js";
+import { blake2b, blake3, totp } from "../tools/cryptography.js";
+import { orderPeers } from "../tools/routing.js";
+import { assert } from "../tools/utils.js";
 import BaseProto from "./base-proto.js";
 
 export interface HandshakeEvents extends ProtocolEvents {

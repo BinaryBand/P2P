@@ -1,9 +1,9 @@
 import { peerIdFromString } from "@libp2p/peer-id";
 import { PeerId } from "@libp2p/interface";
 
-import { BaseTypes } from "../base-proto.js";
-import { HandshakeTypes } from "../handshake-proto.js";
-import { SwarmTypes } from "../swarm-proto.js";
+import { BaseTypes } from "../protocols/base-proto.js";
+import { HandshakeTypes } from "../protocols/handshake-proto.js";
+import { SwarmTypes } from "../protocols/swarm-proto.js";
 // import { MessageTypes } from "../message-proto.js";
 import { assert } from "./utils.js";
 

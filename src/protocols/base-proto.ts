@@ -6,9 +6,9 @@ import { Uint8ArrayList } from "uint8arraylist";
 import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
-import { bytesToBase64, isParcel, isReturn, isRequest, encodePeerId, decodeAddress } from "./tools/typing.js";
-import { totp } from "./tools/cryptography.js";
-import { assert } from "./tools/utils.js";
+import { bytesToBase64, isParcel, isReturn, isRequest, encodePeerId, decodeAddress } from "../tools/typing.js";
+import { totp } from "../tools/cryptography.js";
+import { assert } from "../tools/utils.js";
 
 export enum BaseTypes {
   Return = "base:return",

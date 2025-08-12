@@ -2,10 +2,10 @@ import { Components } from "libp2p/dist/src/components";
 import { PeerId } from "@libp2p/interface";
 // import { LRUCache } from "lru-cache";
 
-import { bytesToBase64, decodeAddress, encode, encodePeerId, isMessageFragment } from "./tools/typing.js";
-import { blake3, reconstructShamirSecret, shamirSecretSharing } from "./tools/cryptography.js";
+import { bytesToBase64, decodeAddress, encode, encodePeerId, isMessageFragment } from "../tools/typing.js";
+import { blake3, reconstructShamirSecret, shamirSecretSharing } from "../tools/cryptography.js";
 import SwarmProto, { SwarmEvents } from "./swarm-proto.js";
-import { assert } from "./tools/utils.js";
+import { assert } from "../tools/utils.js";
 
 export interface MessageEvents extends SwarmEvents {}
 
@@ -25,14 +25,14 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
 
   private async uploadMessage(text: string): Promise<Base64[]> {
     const message: Message = text;
-    const fragments: string[] = await shamirSecretSharing(
+    const fragments: Base64[] = await shamirSecretSharing(
       message,
       MessageProto.SHAMIR_SHARES,
       MessageProto.SHAMIR_THRESHOLD
     );
 
     const id: Uuid = crypto.randomUUID();
-    const messageFragments: MessageFragment[] = fragments.map((content: string) => ({ id, content }));
+    const messageFragments: MessageFragment[] = fragments.map((content: Base64) => ({ id, content }));
     assert(messageFragments.every(isMessageFragment), "All fragments must be valid MessageFragment");
 
     const fragmentStrings: string[] = messageFragments.map((fragment: MessageFragment) => JSON.stringify(fragment));
@@ -54,7 +54,7 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     return undefined;
   }
 
-  public async getInbox(peerId: PeerId): Promise<MessageFragment[]> {
+  public async getInbox(peerId: PeerId): Promise<string[]> {
     console.log("Get Inbox");
 
     const recipient: Address = encodePeerId(peerId);
@@ -62,7 +62,20 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     const fragmentStrings: string[] = await this.fetchFragments(hashes);
 
     const fragments: MessageFragment[] = fragmentStrings.map(MessageProto.tryParse).filter(isMessageFragment);
-    return fragments;
+
+    const puzzlePieces: Record<Uuid, Set<Base64>> = fragments.reduce((acc, fragment) => {
+      if (!acc[fragment.id]) {
+        acc[fragment.id] = new Set<Base64>();
+      }
+      acc[fragment.id].add(fragment.content);
+      return acc;
+    }, {} as Record<Uuid, Set<Base64>>);
+
+    const reconstructedMessages: (string | undefined)[] = await Promise.all(
+      Object.values(puzzlePieces).map(async (contents) => reconstructShamirSecret(Array.from(contents)))
+    );
+
+    return reconstructedMessages.filter((msg): msg is string => msg !== undefined);
   }
 
   public async start(): Promise<void> {

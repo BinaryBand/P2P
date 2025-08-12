@@ -23,27 +23,27 @@ interface Rejection {
 type Return<T extends ResData = ResData> = Acceptance<T> | Rejection;
 
 interface EmptyResponse {
-  type: import("./src/base-proto").BaseTypes.EmptyResponse;
+  type: import("./src/protocols/base-proto").BaseTypes.EmptyResponse;
 }
 
 interface PingResponse {
   role: Role;
-  type: import("./src/handshake-proto").HandshakeTypes.PingResponse;
+  type: import("./src/protocols/handshake-proto").HandshakeTypes.PingResponse;
 }
 
 interface GetNeighborsResponse {
   peers: Address[];
-  type: import("./src/handshake-proto").HandshakeTypes.GetNeighborsResponse;
+  type: import("./src/protocols/handshake-proto").HandshakeTypes.GetNeighborsResponse;
 }
 
 interface GetMetadataResponse {
   metadata: Base64[];
-  type: import("./src/swarm-proto").SwarmTypes.GetMetadataResponse;
+  type: import("./src/protocols/swarm-proto").SwarmTypes.GetMetadataResponse;
 }
 
 interface GetFragmentsResponse {
   fragments: string[];
-  type: import("./src/swarm-proto").SwarmTypes.GetFragmentsResponse;
+  type: import("./src/protocols/swarm-proto").SwarmTypes.GetFragmentsResponse;
 }
 
 type ResData = EmptyResponse | PingResponse | GetNeighborsResponse | GetMetadataResponse | GetFragmentsResponse;
@@ -51,12 +51,12 @@ type ResData = EmptyResponse | PingResponse | GetNeighborsResponse | GetMetadata
 interface InitiationRequest {
   role: Role;
   stamp: Base64;
-  type: import("./src/handshake-proto").HandshakeTypes.InitiationRequest;
+  type: import("./src/protocols/handshake-proto").HandshakeTypes.InitiationRequest;
 }
 
 interface PingRequest {
   stamp: Base64;
-  type: import("./src/handshake-proto").HandshakeTypes.PingRequest;
+  type: import("./src/protocols/handshake-proto").HandshakeTypes.PingRequest;
 }
 
 interface GetNeighborsRequest {
@@ -64,32 +64,32 @@ interface GetNeighborsRequest {
   hash: Base64;
   role: Role;
   stamp: Base64;
-  type: import("./src/handshake-proto").HandshakeTypes.GetNeighborsRequest;
+  type: import("./src/protocols/handshake-proto").HandshakeTypes.GetNeighborsRequest;
 }
 
 interface SetMetadataRequest {
   hashKey: Base64;
   metadata: Base64[];
   stamp: Base64;
-  type: import("./src/swarm-proto").SwarmTypes.SetMetadataRequest;
+  type: import("./src/protocols/swarm-proto").SwarmTypes.SetMetadataRequest;
 }
 
 interface GetMetadataRequest {
   hashKey: Base64;
   stamp: Base64;
-  type: import("./src/swarm-proto").SwarmTypes.GetMetadataRequest;
+  type: import("./src/protocols/swarm-proto").SwarmTypes.GetMetadataRequest;
 }
 
 interface SetFragmentsRequest {
   fragments: string[];
   stamp: Base64;
-  type: import("./src/swarm-proto").SwarmTypes.SetFragmentsRequest;
+  type: import("./src/protocols/swarm-proto").SwarmTypes.SetFragmentsRequest;
 }
 
 interface GetFragmentsRequest {
   hashes: Base64[];
   stamp: Base64;
-  type: import("./src/swarm-proto").SwarmTypes.GetFragmentsRequest;
+  type: import("./src/protocols/swarm-proto").SwarmTypes.GetFragmentsRequest;
 }
 
 type ReqData =
@@ -123,5 +123,5 @@ type Message = string;
 
 type MessageFragment = {
   id: Uuid;
-  content: string;
+  content: Base64;
 };

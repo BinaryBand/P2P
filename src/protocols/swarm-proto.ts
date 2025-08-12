@@ -3,9 +3,9 @@ import { PeerId } from "@libp2p/interface";
 import { LRUCache } from "lru-cache";
 
 import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
-import { bytesToBase64, decodeAddress, isAddress, isBase64 } from "./tools/typing.js";
-import { blake3 } from "./tools/cryptography.js";
-import { assert } from "./tools/utils.js";
+import { bytesToBase64, decodeAddress, isAddress, isBase64 } from "../tools/typing.js";
+import { blake3 } from "../tools/cryptography.js";
+import { assert } from "../tools/utils.js";
 
 interface DataFragment {
   data: string;

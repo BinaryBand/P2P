@@ -17,7 +17,7 @@ import { keys } from "@libp2p/crypto";
 
 import inquirer from "inquirer";
 
-import MessageProto, { MessageEvents } from "./message-proto.js";
+import MessageProto, { MessageEvents } from "./protocols/message-proto.js";
 import { encodePeerId, isAddress } from "./tools/typing.js";
 import { blake3 } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
@@ -130,7 +130,17 @@ async function main(): Promise<void> {
 
   await client.start();
   console.log("Client started with ID:", client.peerId.toString(), "Please wait for connections...");
-  await new Promise((resolve) => setTimeout(resolve, 5000));
+  await new Promise((resolve) => setTimeout(resolve, 7500));
+
+  console.log("Client is ready. You can now interact with the network.");
+  console.log("Your Peer ID:", encodePeerId(client.peerId));
+  console.log("Your Bootstrap Addresses:");
+
+  const addresses: string[] = client.getMultiaddrs().map((addr) => addr.toString());
+  for (let i: number = 0; i < addresses.length; i++) {
+    const addressString: string = addresses[i];
+    console.log(`\t"${addressString}"${i < addresses.length - 1 ? "," : "\n"}`);
+  }
 
   let running: boolean = true;
   while (running) {
@@ -170,13 +180,13 @@ async function main(): Promise<void> {
           await sendMessage(client, recipient, [message]);
           break;
         case "inbox":
-          const inbox: MessageFragment[] = await client.services.proto.getInbox(client.peerId);
+          const inbox: string[] = await client.services.proto.getInbox(client.peerId);
           console.log("Inbox messages:", inbox);
           break;
         case "exit":
           running = false;
-          await client.stop();
           console.log("Exiting...");
+          await client.stop();
           break;
         default:
           console.log("Invalid action. Please try again.");
