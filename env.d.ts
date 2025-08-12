@@ -2,6 +2,12 @@ type Address = import("./src/tools/typing").Address;
 type Base64 = import("./src/tools/typing").Base64;
 type Uuid = `${string}-${string}-${string}-${string}-${string}`;
 
+type Callback<T extends ResData = ResData> = (res: Return<T>) => void;
+
+type ProtocolEvents = Record<string, CustomEvent<Parcel<ReqData>>>;
+
+type AsyncIsh<T, U> = (evt: T) => void | U | Promise<void | U>;
+
 type Role = "phone" | "tower";
 
 interface PeerData {
@@ -10,43 +16,10 @@ interface PeerData {
   timestamp: number;
 }
 
-interface Acceptance<T extends ResData> {
-  data: T;
-  success: true;
+interface PeerDistancePair {
+  peer: Address;
+  distance: number;
 }
-
-interface Rejection {
-  message: string;
-  success: false;
-}
-
-type Return<T extends ResData = ResData> = Acceptance<T> | Rejection;
-
-interface EmptyResponse {
-  type: import("./src/protocols/base-proto").BaseTypes.EmptyResponse;
-}
-
-interface PingResponse {
-  role: Role;
-  type: import("./src/protocols/handshake-proto").HandshakeTypes.PingResponse;
-}
-
-interface GetNeighborsResponse {
-  peers: Address[];
-  type: import("./src/protocols/handshake-proto").HandshakeTypes.GetNeighborsResponse;
-}
-
-interface GetMetadataResponse {
-  metadata: Base64[];
-  type: import("./src/protocols/swarm-proto").SwarmTypes.GetMetadataResponse;
-}
-
-interface GetFragmentsResponse {
-  fragments: string[];
-  type: import("./src/protocols/swarm-proto").SwarmTypes.GetFragmentsResponse;
-}
-
-type ResData = EmptyResponse | PingResponse | GetNeighborsResponse | GetMetadataResponse | GetFragmentsResponse;
 
 interface InitiationRequest {
   role: Role;
@@ -92,6 +65,42 @@ interface GetFragmentsRequest {
   type: import("./src/protocols/swarm-proto").SwarmTypes.GetFragmentsRequest;
 }
 
+interface Acceptance<T extends ResData> {
+  data: T;
+  success: true;
+}
+
+interface Rejection {
+  message: string;
+  success: false;
+}
+
+type Return<T extends ResData = ResData> = Acceptance<T> | Rejection;
+
+interface EmptyResponse {
+  type: import("./src/protocols/base-proto").BaseTypes.EmptyResponse;
+}
+
+interface PingResponse {
+  role: Role;
+  type: import("./src/protocols/handshake-proto").HandshakeTypes.PingResponse;
+}
+
+interface GetNeighborsResponse {
+  peers: Address[];
+  type: import("./src/protocols/handshake-proto").HandshakeTypes.GetNeighborsResponse;
+}
+
+interface GetMetadataResponse {
+  metadata: Base64[];
+  type: import("./src/protocols/swarm-proto").SwarmTypes.GetMetadataResponse;
+}
+
+interface GetFragmentsResponse {
+  fragments: string[];
+  type: import("./src/protocols/swarm-proto").SwarmTypes.GetFragmentsResponse;
+}
+
 type ReqData =
   | InitiationRequest
   | PingRequest
@@ -101,23 +110,20 @@ type ReqData =
   | SetFragmentsRequest
   | GetFragmentsRequest;
 
-interface Parcel<T extends ReqData | Return> {
+type ResData = EmptyResponse | PingResponse | GetNeighborsResponse | GetMetadataResponse | GetFragmentsResponse;
+
+type Payload = ReqData | Return;
+
+type BatchItem<T extends Payload> = {
   callbackId: Uuid;
   payload: T;
+};
+
+interface Parcel<T extends Payload> {
+  batch: BatchItem<T>;
   receiver: Address;
   sender: Address;
 }
-
-type Callback<T extends ResData = ResData> = (res: Return<T>) => void;
-
-interface PeerDistancePair {
-  peer: Address;
-  distance: number;
-}
-
-type ProtocolEvents = Record<string, CustomEvent<Parcel<ReqData>>>;
-
-type AsyncIsh<T, U> = (evt: T) => void | U | Promise<void | U>;
 
 type Message = string;
 

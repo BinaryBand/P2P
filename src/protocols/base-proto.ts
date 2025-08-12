@@ -16,7 +16,7 @@ export enum BaseTypes {
 }
 
 export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitter<T> {
-  public static readonly PROTOCOL: string = "/secret-handshake/proto/0.6.0";
+  public static readonly PROTOCOL: string = "/secret-handshake/proto/0.7.0";
   private static readonly CALLBACK_TIMEOUT: number = 30_000; // 30 seconds until callback request expires
   private static readonly RATE_LIMIT: number = 300; // max requests per 30 seconds
 
@@ -27,13 +27,12 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   protected get pk(): Uint8Array {
     return x25519.getPublicKey(this.sk);
   }
-  protected peerId: PeerId;
+  protected readonly peerId: PeerId;
   protected get address(): Address {
     return encodePeerId(this.peerId);
   }
 
   private callbackMap = new Map<Uuid, Callback>();
-
   private connectionCache = new LRUCache<PeerId, Connection>({ max: 256 });
   private rateLimitCache = new LRUCache<Base64, number>({ max: 2048, ttl: BaseProto.CALLBACK_TIMEOUT });
 
@@ -90,10 +89,10 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
 
   protected async getWithTimeout<T>(promise: Promise<T>, delay: number): Promise<T> {
     let timer: NodeJS.Timeout;
-    const timeoutPromise = new Promise<T>((_, reject) => {
+    const timeoutPromise = new Promise<T>((_, rej) => {
       timer = setTimeout(() => {
         const message: string = "Timeout while waiting for response";
-        reject({ success: false, message });
+        rej({ success: false, message });
       }, delay);
     });
 
@@ -103,15 +102,15 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     });
   }
 
-  private async registerCallback<T extends ReqData, U extends ResData>(
+  // Create a promise that resolves when the response is received
+  private async registerCallback<T extends ReqData, U extends ResData = ResData>(
     parcel: Parcel<T>,
-    delay: number = BaseProto.CALLBACK_TIMEOUT
+    delay: number
   ): Promise<Return<U>> {
-    // Create a promise that resolves when the response is received
-    const responsePromise = new Promise<Return<U>>((resolve) => {
-      this.callbackMap.set(parcel.callbackId, (val: Return) => {
-        this.callbackMap.delete(parcel.callbackId);
-        resolve(val as Return<U>);
+    const responsePromise: Promise<Return<U>> = new Promise<Return<U>>((res) => {
+      this.callbackMap.set(parcel.batch.callbackId, (val: Return) => {
+        this.callbackMap.delete(parcel.batch.callbackId);
+        res(val as Return<U>);
       });
     });
 
@@ -134,10 +133,15 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
    * @returns A promise that resolves to the response data wrapped in a `Return<U>` object.
    * @throws {Error} If the response indicates failure (`result.success` is false).
    */
-  protected async sendRequest<T extends ReqData, U extends ResData>(peerId: PeerId, payload: T): Promise<Return<U>> {
+  protected async sendRequest<T extends ReqData, U extends ResData>(
+    peerId: PeerId,
+    payload: T
+  ): Promise<Acceptance<U>> {
     const callbackId: Uuid = crypto.randomUUID();
     const receiver: Address = encodePeerId(peerId);
-    const parcel: Parcel<T> = { callbackId, payload, receiver, sender: this.address };
+
+    const batch: BatchItem<T> = { callbackId, payload };
+    const parcel: Parcel<T> = { batch, receiver, sender: this.address };
     const result: Return<U> = await this.sendParcel<T, U>(parcel);
     assert(result.success, (result as Rejection).message);
 
@@ -161,7 +165,9 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   private static parseParcel<T extends ReqData>(rawMessage: string): Parcel<T> | null {
     try {
       const parcel: Parcel<T> = JSON.parse(rawMessage);
-      if (isParcel(parcel)) return parcel;
+      if (isParcel(parcel)) {
+        return parcel;
+      }
     } catch {}
     return null;
   }
@@ -183,6 +189,10 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     const rawMessage: string = await BaseProto.decodeStream(stream);
     stream.close();
 
+    if (rawMessage === "") {
+      return;
+    }
+
     try {
       // Check for rate limit violations
       const errorMessage: string = `Rate limit exceeded for peer: ${connection.remotePeer}`;
@@ -193,13 +203,13 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
       assert(encodePeerId(connection.remotePeer) === detail.sender, `${connection.remotePeer} !== ${detail.sender}`);
 
       // If this is a callback response, invoke the callback instead of treating it like a new event
-      if (this.callbackMap.has(detail.callbackId) && isReturn(detail.payload)) {
-        this.callbackMap.get(detail.callbackId)!(detail.payload);
+      if (this.callbackMap.has(detail.batch.callbackId) && isReturn(detail.batch.payload)) {
+        this.callbackMap.get(detail.batch.callbackId)!(detail.batch.payload);
       }
 
       // If this is a new payload, pass it to the event handler
-      else if (isRequest(detail.payload)) {
-        this.dispatchEvent(new CustomEvent(detail.payload.type, { detail }));
+      else if (isRequest(detail.batch.payload)) {
+        this.dispatchEvent(new CustomEvent(detail.batch.payload.type, { detail }));
       }
     } catch (err) {
       console.error("Error processing incoming stream:", { rawMessage }, err);
@@ -228,18 +238,21 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
       const receiver: Address = encodePeerId(senderPeerId); // Who will receive the response
       const sender: Address = this.address;
 
-      let returnParcel: Parcel<Return>;
+      let payload: Return;
       try {
-        const res: ResData = (await args(event)) ?? { type: BaseTypes.EmptyResponse };
-        returnParcel = { callbackId: event.detail.callbackId, payload: { data: res, success: true }, receiver, sender };
+        const data: ResData = (await args(event)) ?? { type: BaseTypes.EmptyResponse };
+        payload = { success: true, data };
       } catch (err: unknown) {
         const errorMessage: string = err instanceof Error ? err.message : String(err);
-        const payload: Rejection = { success: false, message: errorMessage };
-        returnParcel = { callbackId: event.detail.callbackId, payload, receiver, sender };
+        payload = { success: false, message: errorMessage };
       }
 
-      this.sendParcelNoCallback(returnParcel).catch((err) => {
-        console.error("Error sending parcel:", err);
+      const batch: BatchItem<Return> = { callbackId: event.detail.batch.callbackId, payload };
+      const returnParcel: Parcel<Return> = { batch, receiver, sender };
+
+      this.sendParcelNoCallback(returnParcel).catch((err: unknown) => {
+        const message: string = err instanceof Error ? err.message : String(err);
+        console.error("Error sending parcel", message);
       });
     };
 

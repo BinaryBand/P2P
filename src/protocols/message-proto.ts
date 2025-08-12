@@ -24,9 +24,8 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
   }
 
   private async uploadMessage(text: string): Promise<Base64[]> {
-    const message: Message = text;
     const fragments: Base64[] = await shamirSecretSharing(
-      message,
+      text,
       MessageProto.SHAMIR_SHARES,
       MessageProto.SHAMIR_THRESHOLD
     );
@@ -55,8 +54,6 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
   }
 
   public async getInbox(peerId: PeerId): Promise<string[]> {
-    console.log("Get Inbox");
-
     const recipient: Address = encodePeerId(peerId);
     const hashes: Base64[] = await this.fetchMetadata(recipient);
     const fragmentStrings: string[] = await this.fetchFragments(hashes);

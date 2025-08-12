@@ -38,12 +38,11 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   private static readonly LIGHT_FRESHNESS_THRESHOLD: number = 180_000; // 3 minutes
 
   private lightAuditTimer: NodeJS.Timeout | null = null;
+  private metadataCache: LRUCache<Base64, Set<Base64>> = new LRUCache({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
+  private storageCache: LRUCache<Base64, DataFragment> = new LRUCache({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
 
-  protected metadataCache: LRUCache<Base64, Set<Base64>> = new LRUCache({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
-  protected storageCache: LRUCache<Base64, DataFragment> = new LRUCache({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
-
-  constructor(components: Components, passphrase?: string) {
-    super(components, passphrase, "tower");
+  constructor(components: Components, passphrase?: string, role: Role = "tower") {
+    super(components, passphrase, role);
   }
 
   public static Swarm<T extends SwarmEvents>(passphrase?: string): (params: Components) => SwarmProto<T> {
@@ -228,7 +227,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     // Map each peer to the hashes they need to fetch
     const wideNetPromises: Promise<string[]>[] = candidates
       .map((addr: Address) => this.getRemoteFragments(addr, hashes))
-      .map((prom: Promise<string[]>) => this.getWithTimeout(prom, HandshakeProto.LIGHTER_TIMEOUT));
+      .map((prom: Promise<string[]>) => this.getWithTimeout(prom, HandshakeProto.HEAVY_TIMEOUT));
 
     // Flatten the results and filter out any undefined values
     return Promise.all(wideNetPromises).then((res: string[][]) => {
@@ -238,35 +237,33 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private async onSetMetadataRequest({ detail }: CustomEvent<Parcel<SetMetadataRequest>>): Promise<void> {
-    assert(this.verifyStamp(detail.payload), "Invalid stamp");
-
-    this.storeMetadataLocally(detail.payload.hashKey, detail.payload.metadata);
+    assert(this.verifyStamp(detail.batch.payload), "Invalid stamp");
+    this.storeMetadataLocally(detail.batch.payload.hashKey, detail.batch.payload.metadata);
   }
 
   private async onGetMetadataRequest({
     detail,
   }: CustomEvent<Parcel<GetMetadataRequest>>): Promise<GetMetadataResponse> {
-    assert(this.verifyStamp(detail.payload), "Invalid stamp");
-
-    const address: Set<Base64> | null = this.metadataCache.get(detail.payload.hashKey) ?? null;
+    assert(this.verifyStamp(detail.batch.payload), "Invalid stamp");
+    const address: Set<Base64> | null = this.metadataCache.get(detail.batch.payload.hashKey) ?? null;
     return { metadata: [...(address || [])], type: SwarmTypes.GetMetadataResponse };
   }
 
   private onSetFragmentsRequest({ detail }: CustomEvent<Parcel<SetFragmentsRequest>>): void {
-    assert(this.verifyStamp(detail.payload), "Invalid stamp");
-    this.storeFragmentsLocally(detail.payload.fragments);
+    assert(this.verifyStamp(detail.batch.payload), "Invalid stamp");
+    this.storeFragmentsLocally(detail.batch.payload.fragments);
   }
 
   private onGetFragmentsRequest({ detail }: CustomEvent<Parcel<GetFragmentsRequest>>): GetFragmentsResponse {
-    assert(this.verifyStamp(detail.payload), "Invalid stamp");
-    const fragments: string[] = this.getLocalFragments(detail.payload.hashes);
+    assert(this.verifyStamp(detail.batch.payload), "Invalid stamp");
+    const fragments: string[] = this.getLocalFragments(detail.batch.payload.hashes);
     return { fragments, type: SwarmTypes.GetFragmentsResponse };
   }
 
   // Ensure your peers' metadata stays up-to-date
   private hydrateMetadata(): void {
     const keys: Base64[] = Array.from(this.metadataCache.keys());
-    const randomKeys: Base64[] = keys.sort(() => Math.random() - 0.5).slice(0, SwarmProto.AUDITING_NET_SIZE);
+    const randomKeys: Base64[] = keys.sort(() => Math.random()).slice(0, SwarmProto.AUDITING_NET_SIZE);
 
     randomKeys.forEach((randomKey: Base64): void => {
       const values: Base64[] = Array.from(this.metadataCache.get(randomKey) || []);
@@ -282,7 +279,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     const now: number = Date.now();
     const staleFragments = Array.from(this.storageCache.values())
       .filter(({ timestamp }) => timestamp + SwarmProto.LIGHT_FRESHNESS_THRESHOLD < now)
-      .sort(() => Math.random() - 0.5)
+      .sort(() => Math.random())
       .slice(0, SwarmProto.AUDITING_NET_SIZE);
 
     // Map each stale fragment to its nearest local peers

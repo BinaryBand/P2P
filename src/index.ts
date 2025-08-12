@@ -69,25 +69,20 @@ async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void
 
   console.log("Bootstrapping with peer:", peerId.toString());
 
-  // Create an AbortController
-  const abortController: AbortController = new AbortController();
-  const { signal } = abortController;
-
   // Set up inquirer to listen for a key press
-  const keyPressListener = inquirer.prompt([
-    {
-      type: "input",
-      name: "abort",
-      message: 'Press "q" to abort bootstrapping...',
-      filter: (input) => input.trim().toLowerCase(),
-    },
-  ]);
+  const { signal, abort } = new AbortController();
+  const keyPressListener = inquirer.prompt({
+    type: "input",
+    name: "abort",
+    message: 'Press "q" to abort bootstrapping...',
+    filter: (input) => input.trim().toLowerCase(),
+  });
 
   try {
     keyPressListener.then((answers) => {
       if (answers.abort === "q") {
         console.log("Aborting bootstrapping...");
-        abortController.abort();
+        abort();
       }
     });
 
@@ -130,41 +125,35 @@ async function main(): Promise<void> {
 
   await client.start();
   console.log("Client started with ID:", client.peerId.toString(), "Please wait for connections...");
-  await new Promise((resolve) => setTimeout(resolve, 7500));
+  await new Promise((resolve) => setTimeout(resolve, 3000));
 
   console.log("Client is ready. You can now interact with the network.");
   console.log("Your Peer ID:", encodePeerId(client.peerId));
   console.log("Your Bootstrap Addresses:");
 
-  const addresses: string[] = client.getMultiaddrs().map((addr) => addr.toString());
-  for (let i: number = 0; i < addresses.length; i++) {
-    const addressString: string = addresses[i];
-    console.log(`\t"${addressString}"${i < addresses.length - 1 ? "," : "\n"}`);
-  }
-
   let running: boolean = true;
   while (running) {
     try {
-      const { action } = await inquirer.prompt([
-        {
-          type: "list",
-          name: "action",
-          message: `${client.peerId}: Select an action:`,
-          choices: [
-            { name: "Bootstrap to Peer ID", value: "bootstrap" },
-            { name: "View Neighbors", value: "pool" },
-            { name: "Send a message", value: "send" },
-            { name: "View inbox", value: "inbox" },
-            { name: "Exit", value: "exit" },
-          ],
-        },
-      ]);
+      const { action } = await inquirer.prompt({
+        type: "list",
+        name: "action",
+        message: `${client.peerId}: Select an action:`,
+        choices: [
+          { name: "Bootstrap to Peer ID", value: "bootstrap" },
+          { name: "View Neighbors", value: "pool" },
+          { name: "Send a message", value: "send" },
+          { name: "View inbox", value: "inbox" },
+          { name: "Exit", value: "exit" },
+        ],
+      });
 
       switch (action) {
         case "bootstrap":
-          const { bootstrapAddress } = await inquirer.prompt([
-            { type: "input", name: "bootstrapAddress", message: "Enter bootstrap peer ID:" },
-          ]);
+          const { bootstrapAddress } = await inquirer.prompt({
+            type: "input",
+            name: "bootstrapAddress",
+            message: "Enter bootstrap peer ID:",
+          });
           const bootstrapPeerId: PeerId = peerIdFromString(bootstrapAddress);
           await bootstrapClient(client, bootstrapPeerId);
           break;

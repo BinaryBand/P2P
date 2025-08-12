@@ -97,24 +97,38 @@ export function isParcel(parcel: unknown): parcel is Parcel<ReqData | Return> {
     parcel !== undefined &&
     parcel !== null &&
     typeof parcel === "object" &&
-    "callbackId" in parcel &&
-    isUuid(parcel.callbackId) &&
+    "batch" in parcel &&
+    isBatchItem(parcel.batch) &&
     "receiver" in parcel &&
     isAddress(parcel.receiver) &&
     "sender" in parcel &&
-    isAddress(parcel.sender) &&
-    "payload" in parcel &&
-    (isRequest(parcel.payload) || isReturn(parcel.payload))
+    isAddress(parcel.sender)
   ) {
-    _control = {
-      callbackId: parcel.callbackId,
-      payload: parcel.payload,
-      receiver: parcel.receiver,
-      sender: parcel.sender,
-    };
+    _control = { batch: parcel.batch, receiver: parcel.receiver, sender: parcel.sender };
     return true;
   }
   return false;
+}
+
+export function isBatchItem(batchItem: unknown): batchItem is BatchItem<Payload> {
+  let _control: BatchItem<Payload>;
+  if (
+    batchItem !== undefined &&
+    batchItem !== null &&
+    typeof batchItem === "object" &&
+    "callbackId" in batchItem &&
+    isUuid(batchItem.callbackId) &&
+    "payload" in batchItem &&
+    isPayload(batchItem.payload)
+  ) {
+    _control = { callbackId: batchItem.callbackId, payload: batchItem.payload };
+    return true;
+  }
+  return false;
+}
+
+export function isPayload(payload: unknown): payload is Payload {
+  return isRequest(payload) || isReturn(payload);
 }
 
 export function isRequest(payload: unknown): payload is ReqData {

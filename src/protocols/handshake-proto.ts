@@ -28,10 +28,9 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   private static readonly MAX_RECURSION_DEPTH: number = 5; // Maximum depth for recursive nearest peer search
   private static readonly PEER_AUDIT_INTERVAL: number = 20_000; // 20 seconds
   private static readonly PEER_FRESHNESS_THRESHOLD: number = 60_000; // 1 minute
-  protected static readonly AUDITING_NET_SIZE: number = 10;
 
+  protected static readonly AUDITING_NET_SIZE: number = 10;
   protected static readonly HEAVY_TIMEOUT: number = 5_000; // 5 second timeout for heavy operations
-  protected static readonly LIGHTER_TIMEOUT: number = 10_000; // 10 second timeout for lighter operations
 
   protected events: TypedEventTarget<Libp2pEvents>;
 
@@ -228,8 +227,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     }
 
     try {
-      const role: Role = this.role;
-      const request: InitiationRequest = this.stampRequest({ role, type: HandshakeTypes.InitiationRequest });
+      const request: InitiationRequest = this.stampRequest({ role: this.role, type: HandshakeTypes.InitiationRequest });
       const response: Return<PingResponse> = await this.sendRequest(detail.peerId, request);
       assert(response.success, `Failed to initiate handshake with ${detail.peerId}`);
 
@@ -240,26 +238,26 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   }
 
   private onInitiationRequest({ detail }: CustomEvent<Parcel<InitiationRequest>>): void {
-    assert(this.verifyStamp(detail.payload), "Invalid stamp in initiation request");
+    assert(this.verifyStamp(detail.batch.payload), "Invalid stamp in initiation request");
   }
 
   private onPingRequest({ detail }: CustomEvent<Parcel<PingRequest>>): PingResponse {
-    assert(this.verifyStamp(detail.payload), "Invalid stamp in ping request");
-
-    const role: Role = this.role;
-    return { role, type: HandshakeTypes.PingResponse };
+    assert(this.verifyStamp(detail.batch.payload), "Invalid stamp in ping request");
+    return { role: this.role, type: HandshakeTypes.PingResponse };
   }
 
   private onPeersRequest({ detail }: CustomEvent<Parcel<GetNeighborsRequest>>): GetNeighborsResponse {
-    assert(this.verifyStamp(detail.payload), "Invalid stamp");
-    const peers: Address[] = this.getNearestLocalPeers(detail.payload.hash, detail.payload.n);
+    assert(this.verifyStamp(detail.batch.payload), "Invalid stamp");
+    const peers: Address[] = this.getNearestLocalPeers(detail.batch.payload.hash, detail.batch.payload.n);
     return { peers, type: HandshakeTypes.GetNeighborsResponse };
   }
 
   private peerIsStale(peerId: PeerId): boolean {
     const address: Address = encodePeerId(peerId);
     const peerData: PeerData | undefined = this.peersCache.get(address);
-    if (!peerData) return true;
+    if (!peerData) {
+      return true;
+    }
 
     const age: number = Date.now() - peerData.timestamp;
     return age > HandshakeProto.PEER_FRESHNESS_THRESHOLD;
