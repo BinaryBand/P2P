@@ -28,6 +28,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   private static readonly MAX_RECURSION_DEPTH: number = 5; // Maximum depth for recursive nearest peer search
   private static readonly PEER_AUDIT_INTERVAL: number = 20_000; // 20 seconds
   private static readonly PEER_FRESHNESS_THRESHOLD: number = 60_000; // 1 minute
+  protected static readonly AUDITING_NET_SIZE: number = 10;
 
   protected static readonly HEAVY_TIMEOUT: number = 5_000; // 5 second timeout for heavy operations
   protected static readonly LIGHTER_TIMEOUT: number = 10_000; // 10 second timeout for lighter operations
@@ -271,7 +272,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
 
     await Promise.all(auditingPeers.map((peer) => this.requestPulse(peer)));
 
-    (await this.getNeighbors(5, "tower")).forEach((neighbor: Address) => {
+    (await this.getNeighbors(HandshakeProto.AUDITING_NET_SIZE, "tower")).forEach((neighbor: Address) => {
       const peerId: PeerId = decodeAddress(neighbor);
       this.addPeer(peerId, "tower");
     });

@@ -12,7 +12,6 @@ export interface MessageEvents extends SwarmEvents {}
 export enum MessageTypes {}
 
 export default class MessageProto<T extends MessageEvents> extends SwarmProto<T> {
-  private static readonly METADATA_SWARM_SIZE: number = 5;
   private static readonly SHAMIR_SHARES: number = 5;
   private static readonly SHAMIR_THRESHOLD: number = 3;
 

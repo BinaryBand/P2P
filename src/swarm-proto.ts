@@ -36,7 +36,6 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   private static readonly MAX_STORAGE_CACHE_SIZE: number = 2048;
   private static readonly LIGHT_AUDIT_INTERVAL: number = 60_000; // 1 minute
   private static readonly LIGHT_FRESHNESS_THRESHOLD: number = 180_000; // 3 minutes
-  private static readonly RANDOM_AUDITING_NET_SIZE: number = 10;
 
   private lightAuditTimer: NodeJS.Timeout | null = null;
 
@@ -267,7 +266,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   // Ensure your peers' metadata stays up-to-date
   private hydrateMetadata(): void {
     const keys: Base64[] = Array.from(this.metadataCache.keys());
-    const randomKeys: Base64[] = keys.sort(() => Math.random() - 0.5).slice(0, SwarmProto.RANDOM_AUDITING_NET_SIZE);
+    const randomKeys: Base64[] = keys.sort(() => Math.random() - 0.5).slice(0, SwarmProto.AUDITING_NET_SIZE);
 
     randomKeys.forEach((randomKey: Base64): void => {
       const values: Base64[] = Array.from(this.metadataCache.get(randomKey) || []);
@@ -284,7 +283,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     const staleFragments = Array.from(this.storageCache.values())
       .filter(({ timestamp }) => timestamp + SwarmProto.LIGHT_FRESHNESS_THRESHOLD < now)
       .sort(() => Math.random() - 0.5)
-      .slice(0, SwarmProto.RANDOM_AUDITING_NET_SIZE);
+      .slice(0, SwarmProto.AUDITING_NET_SIZE);
 
     // Map each stale fragment to its nearest local peers
     const storageHydrationMap: Map<Address, Set<string>> = new Map();
