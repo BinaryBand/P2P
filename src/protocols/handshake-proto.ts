@@ -48,6 +48,11 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     return (params: Components) => new HandshakeProto(params, passphrase);
   }
 
+  public static hashFromData(data: string): Base64 {
+    const key: Uint8Array = blake3(data);
+    return bytesToBase64(key);
+  }
+
   public async getNeighbors(n: number = 10, role?: Role): Promise<Address[]> {
     const addressHash: Base64 = bytesToBase64(blake3(this.address));
     return this.getNearestPeers(addressHash, n, role ?? this.role);
@@ -155,11 +160,6 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       BaseProto.handleError(err, "getNearestRemotePeers");
       return [];
     }
-  }
-
-  protected static hashFromData(data: string): Base64 {
-    const key: Uint8Array = blake3(data);
-    return bytesToBase64(key);
   }
 
   /**

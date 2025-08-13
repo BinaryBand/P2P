@@ -3,6 +3,7 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 import { isBase64 } from "../tools/typing.js";
+import SwarmProto from "../protocols/swarm-proto.js";
 
 const __filename: string = fileURLToPath(import.meta.url);
 const __dirname: string = dirname(__filename);
@@ -30,37 +31,39 @@ db.serialize(() => {
   db.run("CREATE INDEX IF NOT EXISTS idx_hashKey_hash ON Metadata(hashKey, hash);");
 });
 
-export function setMetadataDb(hashKey: Base64, hashes: Base64[]): Promise<void> {
+export function setMetadataDb(hashKey: Base64, hashes: Base64[], timestamp: number = Date.now()): Promise<void> {
   return new Promise((resolve, reject) => {
-    const now: number = Date.now();
-
-    db.serialize(async () => {
-      db.run("BEGIN TRANSACTION");
-
-      const checkStmt: Statement = db.prepare(`SELECT COUNT(*) AS count FROM Metadata WHERE hashKey = ? AND hash = ?`);
-      const insertStmt: Statement = db.prepare(`INSERT INTO Metadata (hashKey, hash, timestamp) VALUES (?, ?, ?)`);
-
-      // Only add unique key, value pairs
-      const insertPromises: Promise<void>[] = hashes.map(
-        (hash: Base64) =>
-          new Promise<void>((res) => {
-            checkStmt.get([hashKey, hash], (err, row?: { count: number }) => {
-              if (err === null && row?.count === 0) {
-                insertStmt.run(hashKey, hash, now);
-              }
-
-              res();
-            });
-          })
-      );
-
-      await Promise.all(insertPromises).catch(reject);
-
-      insertStmt.finalize(); // Finalize the insert statement
-      checkStmt.finalize(); // Finalize the check statement
-      db.run("COMMIT", (err) => {
+    db.serialize(() => {
+      db.run("BEGIN TRANSACTION", async (err: unknown) => {
         if (err) return reject(err);
-        resolve();
+
+        const checkStmt: Statement = db.prepare(
+          `SELECT COUNT(*) AS count FROM Metadata WHERE hashKey = ? AND hash = ?`
+        );
+        const insertStmt: Statement = db.prepare(`INSERT INTO Metadata (hashKey, hash, timestamp) VALUES (?, ?, ?)`);
+
+        // Only add unique key, value pairs
+        const insertPromises: Promise<void>[] = hashes.map(
+          (hash: Base64) =>
+            new Promise<void>((res) => {
+              checkStmt.get([hashKey, hash], (err, row?: { count: number }) => {
+                if (err === null && row?.count === 0) {
+                  insertStmt.run(hashKey, hash, timestamp);
+                }
+
+                res();
+              });
+            })
+        );
+
+        await Promise.all(insertPromises).catch(reject);
+
+        insertStmt.finalize();
+        checkStmt.finalize();
+        db.run("COMMIT", (err: unknown) => {
+          if (err) return reject(err);
+          resolve();
+        });
       });
     });
   });
@@ -71,6 +74,45 @@ export function getMetadataDb(hashKey: Base64): Promise<Base64[]> {
     const query = `SELECT * FROM Metadata WHERE hashKey = ?`;
     db.all(query, [hashKey], (_err, rows: Metadata[]) => {
       res(rows.map((row: Metadata) => row.hash).filter(isBase64));
+    });
+  });
+}
+
+export function setFragmentsDb(fragments: string[], timestamp: number = Date.now()): Promise<void> {
+  return new Promise((resolve, reject) => {
+    db.serialize(() => {
+      db.run("BEGIN TRANSACTION", async (err: unknown) => {
+        if (err) return reject(err);
+
+        const insertStmt: Statement = db.prepare(
+          `INSERT INTO DataFragment (hashKey, data, timestamp) VALUES (?, ?, ?)`
+        );
+
+        fragments.forEach((frag: string) => {
+          const hashKey: Base64 = SwarmProto.hashFromData(frag);
+          insertStmt.run(hashKey, frag, timestamp);
+        });
+
+        insertStmt.finalize();
+        db.run("COMMIT", (err: unknown) => {
+          if (err) return reject(err);
+          resolve();
+        });
+      });
+    });
+  });
+}
+
+export function getDataFragmentsDb(hashKeys: Base64[]): Promise<string[]> {
+  return new Promise((res: (val: string[]) => void) => {
+    const query = `SELECT * FROM DataFragment WHERE hashKey = ?`;
+
+    db.all(query, hashKeys, (_err, rows: DataFragment[]) => {
+      const fragments: string[] = rows
+        .filter(({ hashKey, data }) => SwarmProto.verifyDataFragment(hashKey, data))
+        .map(({ data }) => data);
+
+      res(fragments);
     });
   });
 }

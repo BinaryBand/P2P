@@ -7,7 +7,7 @@ import { bytesToBase64, decodeAddress } from "../tools/typing.js";
 import { blake3 } from "../tools/cryptography.js";
 import { assert } from "../tools/utils.js";
 import BaseProto from "./base-proto.js";
-import { setMetadataDb, getMetadataDb } from "../database/index.js";
+import { setMetadataDb, getMetadataDb, setFragmentsDb, getDataFragmentsDb } from "../database/index.js";
 
 export interface SwarmEvents extends HandshakeEvents {
   [SwarmTypes.SetMetadataRequest]: CustomEvent<Parcel<SetMetadataRequest>>;
@@ -45,7 +45,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return (params: Components) => new SwarmProto(params, passphrase);
   }
 
-  private static verifyDataFragment(hash: Base64, fragment?: string): boolean {
+  public static verifyDataFragment(hash: Base64, fragment?: string): boolean {
     return fragment !== undefined && HandshakeProto.hashFromData(fragment) === hash;
   }
 
@@ -148,10 +148,12 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private storeFragmentsLocally(fragments: string[]): Base64[] {
-    return fragments.map((fragment) => {
-      const hashKey: Base64 = SwarmProto.hashFromData(fragment);
+    setFragmentsDb(fragments);
+
+    return fragments.map((frag) => {
+      const hashKey: Base64 = SwarmProto.hashFromData(frag);
       const timestamp: number = Date.now();
-      const dataFragment: DataFragment = { data: fragment, hashKey, timestamp };
+      const dataFragment: DataFragment = { data: frag, hashKey, timestamp };
       this.storageCache.set(hashKey, dataFragment);
       return hashKey;
     });
@@ -174,13 +176,17 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     }
   }
 
-  private getLocalFragments(hashes: Base64[]): string[] {
-    getMetadataDb;
-
-    return hashes
+  private async getLocalFragments(hashes: Base64[]): Promise<string[]> {
+    const fromCache: [Base64, string | undefined][] = hashes
       .map((hash: Base64): [Base64, string | undefined] => [hash, this.storageCache.get(hash)?.data])
-      .filter(([hash, fragment]) => SwarmProto.verifyDataFragment(hash, fragment))
-      .map(([, fragment]: [Base64, string | undefined]) => fragment!);
+      .filter(([hash, fragment]) => SwarmProto.verifyDataFragment(hash, fragment));
+
+    const completeHashes: Base64[] = fromCache.filter(([, fragment]) => fragment !== undefined).map(([hash]) => hash);
+    const missingHashes: Base64[] = fromCache.filter(([, fragment]) => fragment === undefined).map(([hash]) => hash);
+    const fromDb: string[] = await getDataFragmentsDb(missingHashes);
+
+    const uniqueSet: Set<string> = new Set([...completeHashes, ...fromDb]);
+    return Array.from(uniqueSet);
   }
 
   private async getRemoteFragments(holder: Address, hashes: Base64[]): Promise<string[]> {
@@ -267,9 +273,11 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     this.storeFragmentsLocally(detail.batch.payload.fragments);
   }
 
-  private onGetFragmentsRequest({ detail }: CustomEvent<Parcel<GetFragmentsRequest>>): GetFragmentsResponse {
+  private async onGetFragmentsRequest({
+    detail,
+  }: CustomEvent<Parcel<GetFragmentsRequest>>): Promise<GetFragmentsResponse> {
     assert(this.verifyStamp(detail.batch.payload), "Invalid stamp");
-    const fragments: string[] = this.getLocalFragments(detail.batch.payload.hashes);
+    const fragments: string[] = await this.getLocalFragments(detail.batch.payload.hashes);
     return { fragments, type: SwarmTypes.GetFragmentsResponse };
   }
 
@@ -280,7 +288,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
     // const randomKeys: Base64[] = keys.sort(() => Math.random()).slice(0, SwarmProto.AUDIT_NET_SIZE);
 
-    const hydrationMap: Map<Address, Set<string>> = new Map();
+    // const hydrationMap: Map<Address, Set<string>> = new Map();
     keys.forEach((randomKey: Base64): void => {
       const values: Base64[] = Array.from(this.metadataCache.get(randomKey) || []);
       const nearestPeers: Address[] = this.getNearestLocalPeers(randomKey, SwarmProto.SWARM_SIZE);
