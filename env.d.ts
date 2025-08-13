@@ -23,9 +23,9 @@ type AsyncIsh<T, U> = (evt: T) => void | U | Promise<void | U>;
 
 type Role = "phone" | "tower";
 
-interface PeerData {
-  role: Role;
+interface PeerInfo {
   peerId: import("@libp2p/interface").PeerId;
+  role: Role;
   timestamp: number;
 }
 
@@ -129,6 +129,25 @@ interface Parcel<T extends Payload> {
   receiver: Address;
   sender: Address;
 }
+
+/* Messages */
+
+interface Metadata {
+  id: number;
+  hashKey: Base64;
+  hash: Base64;
+  timestamp: number;
+}
+
+interface DataFragment {
+  hashKey: Base64;
+  data: string;
+  readonly timestamp: number;
+}
+
+// id INTEGER PRIMARY KEY AUTOINCREMENT,
+// hashKey TEXT NOT NULL,
+// hash TEXT NOT NULL
 
 type Message = string;
 

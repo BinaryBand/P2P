@@ -7,12 +7,7 @@ import { bytesToBase64, decodeAddress } from "../tools/typing.js";
 import { blake3 } from "../tools/cryptography.js";
 import { assert } from "../tools/utils.js";
 import BaseProto from "./base-proto.js";
-
-interface DataFragment {
-  data: string;
-  hash: Base64;
-  timestamp: number;
-}
+import { setMetadataDb, getMetadataDb } from "../database/index.js";
 
 export interface SwarmEvents extends HandshakeEvents {
   [SwarmTypes.SetMetadataRequest]: CustomEvent<Parcel<SetMetadataRequest>>;
@@ -54,13 +49,17 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return fragment !== undefined && HandshakeProto.hashFromData(fragment) === hash;
   }
 
-  private storeMetadataLocally(key: Base64, metadata: Base64[]): void {
-    if (this.metadataCache.has(key)) {
-      const existingHashes: Set<Base64> = this.metadataCache.get(key)!;
-      metadata.forEach((hash: Base64) => existingHashes.add(hash));
-    } else {
-      this.metadataCache.set(key, new Set(metadata));
+  private storeMetadataLocally(hashKey: Base64, metadata: Base64[]): void {
+    // Save to local db
+    setMetadataDb(hashKey, metadata);
+
+    // Update cache
+    let cacheSet: Set<Base64> | undefined = this.metadataCache.get(hashKey);
+    if (cacheSet === undefined) {
+      cacheSet = new Set();
+      this.metadataCache.set(hashKey, cacheSet);
     }
+    metadata.forEach((hash: Base64) => cacheSet.add(hash));
   }
 
   private async storeMetadataRemotely(holder: Address, hashKey: Base64, metadata: Base64[]): Promise<boolean> {
@@ -81,7 +80,18 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private getLocalMetadata(hashKey: Base64): Base64[] {
-    return Array.from(this.metadataCache.get(hashKey) ?? []);
+    let cacheSet: Set<Base64> | undefined = this.metadataCache.get(hashKey);
+    if (cacheSet === undefined) {
+      cacheSet = new Set();
+      this.metadataCache.set(hashKey, cacheSet);
+    }
+
+    // Populate cache from local db
+    getMetadataDb(hashKey).then((rows: Base64[]) => {
+      rows.forEach((row: Base64) => cacheSet.add(row));
+    });
+
+    return Array.from(cacheSet);
   }
 
   private async getRemoteMetadata(holder: Address, hashKey: Base64): Promise<Base64[]> {
@@ -139,11 +149,11 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
   private storeFragmentsLocally(fragments: string[]): Base64[] {
     return fragments.map((fragment) => {
-      const hash: Base64 = SwarmProto.hashFromData(fragment);
+      const hashKey: Base64 = SwarmProto.hashFromData(fragment);
       const timestamp: number = Date.now();
-      const dataFragment: DataFragment = { data: fragment, hash, timestamp };
-      this.storageCache.set(hash, dataFragment);
-      return hash;
+      const dataFragment: DataFragment = { data: fragment, hashKey, timestamp };
+      this.storageCache.set(hashKey, dataFragment);
+      return hashKey;
     });
   }
 
@@ -165,6 +175,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private getLocalFragments(hashes: Base64[]): string[] {
+    getMetadataDb;
+
     return hashes
       .map((hash: Base64): [Base64, string | undefined] => [hash, this.storageCache.get(hash)?.data])
       .filter(([hash, fragment]) => SwarmProto.verifyDataFragment(hash, fragment))
@@ -287,8 +299,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
     // Map each stale fragment to its nearest local peers
     const hydrationMap: Map<Address, Set<string>> = new Map();
-    for (const { data, hash } of staleFragments) {
-      const localSwarm: Address[] = this.getNearestLocalPeers(hash, SwarmProto.SWARM_SIZE);
+    for (const { data, hashKey } of staleFragments) {
+      const localSwarm: Address[] = this.getNearestLocalPeers(hashKey, SwarmProto.SWARM_SIZE);
       localSwarm.forEach((addr: Address): void => {
         let hashSet: Set<string> | undefined = hydrationMap.get(addr);
         if (!hashSet) {

@@ -30,10 +30,9 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   private static readonly PEER_FRESHNESS_THRESHOLD: number = 60_000; // 1 minute
   private static readonly AUDIT_NET_SIZE: number = 10;
 
-  protected events: TypedEventTarget<Libp2pEvents>;
-
+  private events: TypedEventTarget<Libp2pEvents>;
   private peerAuditTimer?: NodeJS.Timeout;
-  private peersCache: LRUCache<Address, PeerData> = new LRUCache({ max: 256 });
+  private peersCache: LRUCache<Address, PeerInfo> = new LRUCache({ max: 256 });
 
   constructor(
     components: Components,
@@ -51,8 +50,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
 
   public async getNeighbors(n: number = 10, role?: Role): Promise<Address[]> {
     const addressHash: Base64 = bytesToBase64(blake3(this.address));
-    const nearestPeers: Address[] = await this.getNearestPeers(addressHash, n, role ?? this.role);
-    return nearestPeers;
+    return this.getNearestPeers(addressHash, n, role ?? this.role);
   }
 
   /**
@@ -250,7 +248,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
 
   private peerIsStale(peerId: PeerId, now: number = Date.now()): boolean {
     const address: Address = encodePeerId(peerId);
-    const peerData: PeerData | undefined = this.peersCache.get(address);
+    const peerData: PeerInfo | undefined = this.peersCache.get(address);
     if (!peerData) {
       return true;
     }
