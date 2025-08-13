@@ -3,9 +3,10 @@ import { PeerId } from "@libp2p/interface";
 import { LRUCache } from "lru-cache";
 
 import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
-import { bytesToBase64, decodeAddress, isAddress, isBase64 } from "../tools/typing.js";
+import { bytesToBase64, decodeAddress } from "../tools/typing.js";
 import { blake3 } from "../tools/cryptography.js";
 import { assert } from "../tools/utils.js";
+import BaseProto from "./base-proto.js";
 
 interface DataFragment {
   data: string;
@@ -37,7 +38,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   private static readonly LIGHT_AUDIT_INTERVAL: number = 60_000; // 1 minute
   private static readonly LIGHT_FRESHNESS_THRESHOLD: number = 180_000; // 3 minutes
 
-  private lightAuditTimer: NodeJS.Timeout | null = null;
+  private lightAuditTimer?: NodeJS.Timeout;
   private metadataCache: LRUCache<Base64, Set<Base64>> = new LRUCache({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
   private storageCache: LRUCache<Base64, DataFragment> = new LRUCache({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
 
@@ -73,8 +74,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
       const request: SetMetadataRequest = this.stampRequest({ hashKey, metadata, type: SwarmTypes.SetMetadataRequest });
       await this.sendRequest(peerId, request);
       return true;
-    } catch (err) {
-      console.warn(`Error storing data to ${holder}:`, err);
+    } catch (err: unknown) {
+      BaseProto.handleError(err, "storeMetadataRemotely");
       return false;
     }
   }
@@ -95,8 +96,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
       assert(response.success, `Failed to get metadata from ${peerId}`);
 
       return response.data.metadata;
-    } catch (err) {
-      console.warn(`Error getting metadata from ${holder}:`, err);
+    } catch (err: unknown) {
+      BaseProto.handleError(err, "getRemoteMetadata");
       return [];
     }
   }
@@ -157,8 +158,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
       const request: SetFragmentsRequest = this.stampRequest({ fragments, type: SwarmTypes.SetFragmentsRequest });
       await this.sendRequest(peerId, request);
       return true;
-    } catch (err) {
-      console.warn(`Error storing data to ${address}:`, err);
+    } catch (err: unknown) {
+      BaseProto.handleError(err, "storeFragmentsRemotely");
       return false;
     }
   }
@@ -182,8 +183,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
       assert(response.success, `Failed to find nearest peers for ${peerId}`);
 
       return response.data.fragments;
-    } catch (err) {
-      console.warn(`Error getting remote storage from ${holder}:`, err);
+    } catch (err: unknown) {
+      BaseProto.handleError(err, "getRemoteFragments");
       return [];
     }
   }
@@ -227,7 +228,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     // Map each peer to the hashes they need to fetch
     const wideNetPromises: Promise<string[]>[] = candidates
       .map((addr: Address) => this.getRemoteFragments(addr, hashes))
-      .map((prom: Promise<string[]>) => this.getWithTimeout(prom, HandshakeProto.HEAVY_TIMEOUT));
+      .map((prom: Promise<string[]>) => this.getWithTimeout(prom, HandshakeProto.HEAVY_CALLBACK_TIMEOUT));
 
     // Flatten the results and filter out any undefined values
     return Promise.all(wideNetPromises).then((res: string[][]) => {
@@ -263,9 +264,12 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   // Ensure your peers' metadata stays up-to-date
   private hydrateMetadata(): void {
     const keys: Base64[] = Array.from(this.metadataCache.keys());
-    const randomKeys: Base64[] = keys.sort(() => Math.random()).slice(0, SwarmProto.AUDITING_NET_SIZE);
+    // const hydrationMap: Map<Address, Set<string>> = new Map();
 
-    randomKeys.forEach((randomKey: Base64): void => {
+    // const randomKeys: Base64[] = keys.sort(() => Math.random()).slice(0, SwarmProto.AUDIT_NET_SIZE);
+
+    const hydrationMap: Map<Address, Set<string>> = new Map();
+    keys.forEach((randomKey: Base64): void => {
       const values: Base64[] = Array.from(this.metadataCache.get(randomKey) || []);
       const nearestPeers: Address[] = this.getNearestLocalPeers(randomKey, SwarmProto.SWARM_SIZE);
       nearestPeers.forEach((holder: Address): void => {
@@ -277,26 +281,27 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   private hydrateStorage(): void {
     // Only update stale fragments that are in the cache
     const now: number = Date.now();
-    const staleFragments = Array.from(this.storageCache.values())
-      .filter(({ timestamp }) => timestamp + SwarmProto.LIGHT_FRESHNESS_THRESHOLD < now)
-      .sort(() => Math.random())
-      .slice(0, SwarmProto.AUDITING_NET_SIZE);
+    const staleFragments = Array.from(this.storageCache.values()).filter(
+      ({ timestamp }) => timestamp + SwarmProto.LIGHT_FRESHNESS_THRESHOLD < now
+    );
 
     // Map each stale fragment to its nearest local peers
-    const storageHydrationMap: Map<Address, Set<string>> = new Map();
-    staleFragments.forEach(({ data, hash }: DataFragment) => {
+    const hydrationMap: Map<Address, Set<string>> = new Map();
+    for (const { data, hash } of staleFragments) {
       const localSwarm: Address[] = this.getNearestLocalPeers(hash, SwarmProto.SWARM_SIZE);
       localSwarm.forEach((addr: Address): void => {
-        if (!storageHydrationMap.has(addr)) {
-          storageHydrationMap.set(addr, new Set());
+        let hashSet: Set<string> | undefined = hydrationMap.get(addr);
+        if (!hashSet) {
+          hashSet = new Set();
+          hydrationMap.set(addr, hashSet);
         }
 
-        storageHydrationMap.get(addr)!.add(data);
+        hashSet.add(data);
       });
-    });
+    }
 
     // Hydrate stale fragments from local peers
-    for (const [addr, dataSet] of storageHydrationMap.entries()) {
+    for (const [addr, dataSet] of hydrationMap.entries()) {
       const dataArray: string[] = Array.from(dataSet);
       this.storeFragmentsRemotely(addr, dataArray);
     }
@@ -330,9 +335,9 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     this.metadataCache.clear();
     this.storageCache.clear();
 
-    if (this.lightAuditTimer !== null) {
+    if (this.lightAuditTimer !== undefined) {
       clearInterval(this.lightAuditTimer);
-      this.lightAuditTimer = null;
+      this.lightAuditTimer = undefined;
     }
   }
 }

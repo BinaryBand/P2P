@@ -6,8 +6,7 @@ import { Uint8ArrayList } from "uint8arraylist";
 import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
-import { bytesToBase64, isParcel, isReturn, isRequest, encodePeerId, decodeAddress } from "../tools/typing.js";
-import { totp } from "../tools/cryptography.js";
+import { isParcel, isReturn, isRequest, decodeAddress, encodePeerId, decode, encode } from "../tools/typing.js";
 import { assert } from "../tools/utils.js";
 
 export enum BaseTypes {
@@ -16,9 +15,12 @@ export enum BaseTypes {
 }
 
 export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitter<T> {
-  public static readonly PROTOCOL: string = "/secret-handshake/proto/0.7.0";
-  private static readonly CALLBACK_TIMEOUT: number = 30_000; // 30 seconds until callback request expires
-  private static readonly RATE_LIMIT: number = 300; // max requests per 30 seconds
+  public static readonly PROTOCOL: string = "/secret-handshake/proto/0.7.1";
+
+  private static readonly BATCH_TIMEOUT: number = 250; // send batch if no new parcels arrive within a quarter of a second
+  private static readonly CONNECTION_CACHE_TIMEOUT: number = 30_000; // 30 seconds until connection request expires
+  private static readonly CALLBACK_TIMEOUT: number = 10_000; // 10 seconds until callback request expires
+  protected static readonly HEAVY_CALLBACK_TIMEOUT: number = 5_000; // 5 second timeout for heavy operations
 
   private connectionManager: Components["connectionManager"];
   private registrar: Components["registrar"];
@@ -32,59 +34,23 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     return encodePeerId(this.peerId);
   }
 
+  private batches = new Map<Address, Set<Parcel<Payload>>>();
+  private batchTimers = new Map<Address, NodeJS.Timeout>();
   private callbackMap = new Map<Uuid, Callback>();
-  private connectionCache = new LRUCache<PeerId, Connection>({ max: 256 });
-  private rateLimitCache = new LRUCache<Base64, number>({ max: 2048, ttl: BaseProto.CALLBACK_TIMEOUT });
+
+  private connectionCache = new LRUCache<PeerId, Connection>({ max: 256, ttl: BaseProto.CONNECTION_CACHE_TIMEOUT });
 
   constructor(components: Components) {
     super();
+    this.peerId = components.peerId;
     this.sk = components.privateKey.raw.subarray(0, 32);
     this.connectionManager = components.connectionManager;
-    this.peerId = components.peerId;
     this.registrar = components.registrar;
   }
 
-  private async getConnection(peerId: PeerId): Promise<Connection> {
-    const existingConnection: Connection | undefined = this.connectionCache.get(peerId);
-    if (existingConnection !== undefined) {
-      if (existingConnection.status === "open" && existingConnection.direction === "outbound") {
-        return Promise.resolve(existingConnection);
-      } else {
-        this.connectionCache.delete(peerId);
-      }
-    }
-
-    const newConnection: Connection = await this.connectionManager.openConnection(peerId);
-    this.connectionCache.set(peerId, newConnection);
-    return newConnection;
-  }
-
-  private static async decodeStream(stream: Stream): Promise<string> {
-    const decoder = new TextDecoder("utf-8");
-    let result: string = "";
-
-    await pipe(stream, async (source: AsyncGenerator<Uint8ArrayList>) => {
-      for await (const data of source) {
-        result += decoder.decode(data.subarray(), { stream: true });
-      }
-    });
-
-    result += decoder.decode(); // Flush any remaining data
-    return result;
-  }
-
-  private async sendParcelNoCallback<T extends ReqData | Return>(parcel: Parcel<T>): Promise<void> {
-    const peerId: PeerId = decodeAddress(parcel.receiver);
-
-    const connection: Connection = await this.getConnection(peerId);
-    const outgoing: Stream = await connection.newStream(BaseProto.PROTOCOL);
-    try {
-      const parcelString: string = JSON.stringify(parcel);
-      await pipe([Buffer.from(parcelString, "utf-8")], outgoing);
-    } catch {
-    } finally {
-      outgoing.close();
-    }
+  protected static handleError(err: unknown, context: string): void {
+    const message: string = err instanceof Error ? err.message : String(err);
+    console.error(`Error ${context}:`, message);
   }
 
   protected async getWithTimeout<T>(promise: Promise<T>, delay: number): Promise<T> {
@@ -102,6 +68,30 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     });
   }
 
+  private async getConnection(peerId: PeerId): Promise<Connection> {
+    const existingConnection: Connection | undefined = this.connectionCache.get(peerId);
+    if (existingConnection?.status === "open" && existingConnection?.direction === "outbound") {
+      return existingConnection;
+    }
+
+    const newConnection: Connection = await this.connectionManager.openConnection(peerId);
+    this.connectionCache.set(peerId, newConnection);
+    return newConnection;
+  }
+
+  private static async decodeStream(stream: Stream): Promise<string> {
+    const chunks: string[] = [];
+
+    await pipe(stream, async (source: AsyncGenerator<Uint8ArrayList>) => {
+      for await (const data of source) {
+        chunks.push(decode(data.subarray(), { stream: true }));
+      }
+    });
+
+    chunks.push(decode()); // Flush any remaining data
+    return chunks.join("");
+  }
+
   // Create a promise that resolves when the response is received
   private async registerCallback<T extends ReqData, U extends ResData = ResData>(
     parcel: Parcel<T>,
@@ -117,22 +107,51 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     return this.getWithTimeout(responsePromise, delay);
   }
 
-  private async sendParcel<T extends ReqData, U extends ResData>(parcel: Parcel<T>): Promise<Return<U>> {
-    return this.sendParcelNoCallback(parcel).then(() => {
-      return this.registerCallback(parcel, BaseProto.CALLBACK_TIMEOUT);
-    });
+  private async sendBatch<T extends Payload>(parcels: Parcel<T>[]): Promise<void> {
+    const peerId: PeerId = decodeAddress(parcels[0].receiver);
+    const connection: Connection = await this.getConnection(peerId);
+    const outgoing: Stream = await connection.newStream(BaseProto.PROTOCOL);
+
+    try {
+      const parcelsString: string = JSON.stringify(parcels);
+      const parcelsBuffer: Uint8Array = encode(parcelsString);
+      await pipe([parcelsBuffer], outgoing);
+    } catch (err: unknown) {
+      BaseProto.handleError(err, "sendBatch");
+    } finally {
+      outgoing.close();
+    }
   }
 
-  /**
-   * Sends a request to a specified peer and awaits a response.
-   *
-   * @template T - The type of the request payload.
-   * @template U - The type of the expected response data.
-   * @param peerId - The identifier of the peer to send the request to.
-   * @param payload - The payload data to send with the request.
-   * @returns A promise that resolves to the response data wrapped in a `Return<U>` object.
-   * @throws {Error} If the response indicates failure (`result.success` is false).
-   */
+  private async addToBatch(parcel: Parcel<Payload>): Promise<void> {
+    const userAddress: Address = parcel.receiver;
+    let batch: Set<Parcel<Payload>> | undefined = this.batches.get(userAddress);
+    if (batch === undefined) {
+      batch = new Set();
+      this.batches.set(userAddress, batch);
+    }
+    batch.add(parcel);
+
+    // Clear existing timer
+    const existingTimer: NodeJS.Timeout | undefined = this.batchTimers.get(userAddress);
+    if (existingTimer !== undefined) {
+      clearTimeout(existingTimer);
+    }
+
+    // Dispatch batch if a new parcel hasn't arrived within the timeout
+    const launchTimer: NodeJS.Timeout = setTimeout(() => {
+      this.sendBatch(Array.from(batch));
+      this.batches.delete(userAddress);
+      this.batchTimers.delete(userAddress);
+    }, BaseProto.BATCH_TIMEOUT);
+    this.batchTimers.set(userAddress, launchTimer);
+  }
+
+  private async sendParcel<T extends ReqData, U extends ResData>(parcel: Parcel<T>): Promise<Return<U>> {
+    this.addToBatch(parcel);
+    return this.registerCallback(parcel, BaseProto.CALLBACK_TIMEOUT);
+  }
+
   protected async sendRequest<T extends ReqData, U extends ResData>(
     peerId: PeerId,
     payload: T
@@ -140,98 +159,48 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     const callbackId: Uuid = crypto.randomUUID();
     const receiver: Address = encodePeerId(peerId);
 
-    const batch: BatchItem<T> = { callbackId, payload };
-    const parcel: Parcel<T> = { batch, receiver, sender: this.address };
+    const parcel: Parcel<T> = { batch: { callbackId, payload }, receiver, sender: this.address };
     const result: Return<U> = await this.sendParcel<T, U>(parcel);
     assert(result.success, (result as Rejection).message);
 
     return result;
   }
 
-  private exceedsRateLimit(peerId: PeerId): boolean {
-    const timedFingerprint: Uint8Array = totp(peerId.toCID().bytes);
-    const key: Base64 = bytesToBase64(timedFingerprint);
-    const rateCount: number = (this.rateLimitCache.get(key) ?? 0) + 1;
-
-    // Early exit if limit exceeded
-    if (rateCount > BaseProto.RATE_LIMIT) {
-      return true;
-    }
-
-    this.rateLimitCache.set(key, rateCount);
-    return false;
-  }
-
-  private static parseParcel<T extends ReqData>(rawMessage: string): Parcel<T> | null {
+  private static parseIncoming(rawMessage: string): Parcel<Payload>[] {
     try {
-      const parcel: Parcel<T> = JSON.parse(rawMessage);
-      if (isParcel(parcel)) {
+      const parcel: unknown = JSON.parse(rawMessage);
+      if (Array.isArray(parcel) && parcel.every(isParcel)) {
         return parcel;
       }
     } catch {}
-    return null;
+    return [];
   }
 
-  /**
-   * Handles an incoming stream from a peer connection.
-   *
-   * This method decodes the incoming stream, checks for rate limits and duplicate messages,
-   * parses the message into a parcel, and dispatches the appropriate event or callback.
-   * If the message is a callback response, it invokes the corresponding callback.
-   * If the message is a new payload, it dispatches a custom event with the payload details.
-   * Logs warnings for rate limit violations and excessive duplicate messages.
-   * Catches and logs errors encountered during processing.
-   *
-   * @param {IncomingStreamData} params - The incoming stream data containing the connection and stream.
-   * @returns {Promise<void>} A promise that resolves when the stream has been processed.
-   */
   private async onIncomingStream({ connection, stream }: IncomingStreamData): Promise<void> {
     const rawMessage: string = await BaseProto.decodeStream(stream);
     stream.close();
 
-    if (rawMessage === "") {
-      return;
-    }
-
+    const sender: Address = encodePeerId(connection.remotePeer);
     try {
-      // Check for rate limit violations
-      const errorMessage: string = `Rate limit exceeded for peer: ${connection.remotePeer}`;
-      assert(!this.exceedsRateLimit(connection.remotePeer), errorMessage);
+      const parcels: Parcel<Payload>[] = BaseProto.parseIncoming(rawMessage);
+      for (const detail of parcels) {
+        assert(sender === detail.sender, `${sender} !== ${detail.sender}`);
 
-      const detail: Parcel<ReqData | Return> | null = BaseProto.parseParcel(rawMessage);
-      assert(detail !== null, `Invalid parcel received: ${rawMessage}`);
-      assert(encodePeerId(connection.remotePeer) === detail.sender, `${connection.remotePeer} !== ${detail.sender}`);
+        // If this is a callback response, invoke the callback instead of treating it like a new event
+        if (this.callbackMap.has(detail.batch.callbackId) && isReturn(detail.batch.payload)) {
+          this.callbackMap.get(detail.batch.callbackId)!(detail.batch.payload);
+        }
 
-      // If this is a callback response, invoke the callback instead of treating it like a new event
-      if (this.callbackMap.has(detail.batch.callbackId) && isReturn(detail.batch.payload)) {
-        this.callbackMap.get(detail.batch.callbackId)!(detail.batch.payload);
+        // If this is a new payload, pass it to the event handler
+        else if (isRequest(detail.batch.payload)) {
+          this.dispatchEvent(new CustomEvent(detail.batch.payload.type, { detail }));
+        }
       }
-
-      // If this is a new payload, pass it to the event handler
-      else if (isRequest(detail.batch.payload)) {
-        this.dispatchEvent(new CustomEvent(detail.batch.payload.type, { detail }));
-      }
-    } catch (err) {
-      console.error("Error processing incoming stream:", { rawMessage }, err);
+    } catch (err: unknown) {
+      BaseProto.handleError(err, "onIncomingStream");
     }
   }
 
-  /**
-   * Registers an asynchronous event listener for a specific event type.
-   *
-   * @typeParam K - The event type key, constrained to the keys of `T`.
-   * @typeParam U - The response data type, extending `ResData`.
-   * @param type - The event type to listen for.
-   * @param args - An asynchronous callback function that handles the event and returns a response or a promise of a response.
-   *
-   * The listener wraps the callback to handle both successful and error responses,
-   * packaging the result into a `Parcel` and sending it back to the sender.
-   * Errors thrown by the callback are caught and sent as rejection payloads.
-   *
-   * @remarks
-   * This method overrides the base `addEventListener` to provide additional logic for
-   * handling peer-to-peer event responses, including error handling and response packaging.
-   */
   public addEventListener<K extends keyof T>(type: K, args: AsyncIsh<T[K], ResData>): void {
     const eventWrapper = async (event: T[K]): Promise<void> => {
       const senderPeerId: PeerId = decodeAddress(event.detail.sender); // Who sent the request
@@ -247,10 +216,10 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
         payload = { success: false, message: errorMessage };
       }
 
-      const batch: BatchItem<Return> = { callbackId: event.detail.batch.callbackId, payload };
-      const returnParcel: Parcel<Return> = { batch, receiver, sender };
+      const callbackId: Uuid = event.detail.batch.callbackId;
+      const returnParcel: Parcel<Return> = { batch: { callbackId, payload }, receiver, sender };
 
-      this.sendParcelNoCallback(returnParcel).catch((err: unknown) => {
+      this.addToBatch(returnParcel).catch((err: unknown) => {
         const message: string = err instanceof Error ? err.message : String(err);
         console.error("Error sending parcel", message);
       });
@@ -267,6 +236,5 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     await this.registrar.unhandle(BaseProto.PROTOCOL);
     this.callbackMap.clear();
     this.connectionCache.clear();
-    this.rateLimitCache.clear();
   }
 }

@@ -2,11 +2,24 @@ type Address = import("./src/tools/typing").Address;
 type Base64 = import("./src/tools/typing").Base64;
 type Uuid = `${string}-${string}-${string}-${string}-${string}`;
 
+interface Acceptance<T extends ResData> {
+  data: T;
+  success: true;
+}
+
+interface Rejection {
+  message: string;
+  success: false;
+}
+
+type Return<T extends ResData = ResData> = Acceptance<T> | Rejection;
 type Callback<T extends ResData = ResData> = (res: Return<T>) => void;
 
 type ProtocolEvents = Record<string, CustomEvent<Parcel<ReqData>>>;
 
 type AsyncIsh<T, U> = (evt: T) => void | U | Promise<void | U>;
+
+/* Peer */
 
 type Role = "phone" | "tower";
 
@@ -20,6 +33,8 @@ interface PeerDistancePair {
   peer: Address;
   distance: number;
 }
+
+/* Requests */
 
 interface InitiationRequest {
   role: Role;
@@ -65,17 +80,7 @@ interface GetFragmentsRequest {
   type: import("./src/protocols/swarm-proto").SwarmTypes.GetFragmentsRequest;
 }
 
-interface Acceptance<T extends ResData> {
-  data: T;
-  success: true;
-}
-
-interface Rejection {
-  message: string;
-  success: false;
-}
-
-type Return<T extends ResData = ResData> = Acceptance<T> | Rejection;
+/* Responses */
 
 interface EmptyResponse {
   type: import("./src/protocols/base-proto").BaseTypes.EmptyResponse;

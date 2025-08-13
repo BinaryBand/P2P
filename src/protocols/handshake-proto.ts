@@ -28,13 +28,11 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   private static readonly MAX_RECURSION_DEPTH: number = 5; // Maximum depth for recursive nearest peer search
   private static readonly PEER_AUDIT_INTERVAL: number = 20_000; // 20 seconds
   private static readonly PEER_FRESHNESS_THRESHOLD: number = 60_000; // 1 minute
-
-  protected static readonly AUDITING_NET_SIZE: number = 10;
-  protected static readonly HEAVY_TIMEOUT: number = 5_000; // 5 second timeout for heavy operations
+  private static readonly AUDIT_NET_SIZE: number = 10;
 
   protected events: TypedEventTarget<Libp2pEvents>;
 
-  private peerAuditTimer: NodeJS.Timeout | null = null;
+  private peerAuditTimer?: NodeJS.Timeout;
   private peersCache: LRUCache<Address, PeerData> = new LRUCache({ max: 256 });
 
   constructor(
@@ -122,8 +120,8 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       assert(response.success, `Failed to verify pulse request from ${peerId}`);
 
       this.addPeer(peerId, response.data.role);
-    } catch {
-      console.warn(`Failed to verify pulse request from ${peerId}`);
+    } catch (err: unknown) {
+      BaseProto.handleError(err, "requestPulse");
       this.peersCache.delete(encodePeerId(peerId));
     }
   }
@@ -155,8 +153,8 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       assert(response.success, `Failed to find nearest peers for ${peerId}`);
 
       return response.data.peers;
-    } catch (err) {
-      console.warn(`Error getting nearest peers from ${address}:`, err);
+    } catch (err: unknown) {
+      BaseProto.handleError(err, "getNearestRemotePeers");
       return [];
     }
   }
@@ -186,14 +184,12 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       // Query the wide network for more peers
       const wideNetPromises: Promise<Address[]>[] = peers
         .map(({ peer }: PeerDistancePair) => this.getNearestRemotePeers(peer, hash, n, role))
-        .map((promise: Promise<Address[]>) => this.getWithTimeout(promise, HandshakeProto.HEAVY_TIMEOUT));
+        .map((promise: Promise<Address[]>) => this.getWithTimeout(promise, HandshakeProto.HEAVY_CALLBACK_TIMEOUT));
 
       // Wait for all wide network queries to settle
       const wideNetResults: PromiseSettledResult<Address[]>[] = await Promise.allSettled(wideNetPromises);
       const validResults: Address[] = wideNetResults
-        .filter(
-          (res: PromiseSettledResult<Address[]>): res is PromiseFulfilledResult<Address[]> => res.status === "fulfilled"
-        )
+        .filter((res): res is PromiseFulfilledResult<Address[]> => res.status === "fulfilled")
         .flatMap(({ value }: PromiseFulfilledResult<Address[]>) => value);
 
       peers = orderPeers(hash, validResults);
@@ -232,8 +228,8 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       assert(response.success, `Failed to initiate handshake with ${detail.peerId}`);
 
       this.addPeer(detail.peerId, response.data.role);
-    } catch {
-      console.warn(`${this.peerId} Failed to initiate handshake with peer ${detail.peerId}`);
+    } catch (err: unknown) {
+      BaseProto.handleError(err, "initiateHandshake");
     }
   }
 
@@ -252,27 +248,30 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     return { peers, type: HandshakeTypes.GetNeighborsResponse };
   }
 
-  private peerIsStale(peerId: PeerId): boolean {
+  private peerIsStale(peerId: PeerId, now: number = Date.now()): boolean {
     const address: Address = encodePeerId(peerId);
     const peerData: PeerData | undefined = this.peersCache.get(address);
     if (!peerData) {
       return true;
     }
 
-    const age: number = Date.now() - peerData.timestamp;
+    const age: number = now - peerData.timestamp;
     return age > HandshakeProto.PEER_FRESHNESS_THRESHOLD;
   }
 
   private async auditPeers(): Promise<void> {
-    const auditingPeers: PeerId[] = Array.from(this.peersCache.entries())
-      .filter(([_addr, { peerId }]) => this.peerIsStale(peerId))
-      .map(([addr]) => decodeAddress(addr));
+    const now: number = Date.now();
 
-    await Promise.all(auditingPeers.map((peer) => this.requestPulse(peer)));
+    Array.from(this.peersCache.entries())
+      .filter(([_addr, { peerId }]) => this.peerIsStale(peerId, now))
+      .map(([addr]) => decodeAddress(addr))
+      .forEach(this.requestPulse.bind(this));
 
-    (await this.getNeighbors(HandshakeProto.AUDITING_NET_SIZE, "tower")).forEach((neighbor: Address) => {
-      const peerId: PeerId = decodeAddress(neighbor);
-      this.addPeer(peerId, "tower");
+    this.getNeighbors(HandshakeProto.AUDIT_NET_SIZE, "tower").then((neighbors: Address[]) => {
+      neighbors.forEach((neighbor: Address) => {
+        const peerId: PeerId = decodeAddress(neighbor);
+        this.addPeer(peerId, "tower");
+      });
     });
   }
 
@@ -300,9 +299,9 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
 
     this.peersCache.clear();
 
-    if (this.peerAuditTimer) {
+    if (this.peerAuditTimer !== undefined) {
       clearInterval(this.peerAuditTimer);
-      this.peerAuditTimer = null;
+      this.peerAuditTimer = undefined;
     }
   }
 }

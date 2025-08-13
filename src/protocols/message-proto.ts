@@ -1,11 +1,11 @@
 import { Components } from "libp2p/dist/src/components";
 import { PeerId } from "@libp2p/interface";
-// import { LRUCache } from "lru-cache";
 
-import { bytesToBase64, decodeAddress, encode, encodePeerId, isMessageFragment } from "../tools/typing.js";
-import { blake3, reconstructShamirSecret, shamirSecretSharing } from "../tools/cryptography.js";
+import { reconstructShamirSecret, shamirSecretSharing } from "../tools/cryptography.js";
+import { encodePeerId, isMessageFragment } from "../tools/typing.js";
 import SwarmProto, { SwarmEvents } from "./swarm-proto.js";
 import { assert } from "../tools/utils.js";
+import BaseProto from "./base-proto.js";
 
 export interface MessageEvents extends SwarmEvents {}
 
@@ -49,7 +49,9 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     try {
       const result: T = JSON.parse(rawString);
       return result;
-    } catch {}
+    } catch (err: unknown) {
+      BaseProto.handleError(err, "tryParse");
+    }
     return undefined;
   }
 
@@ -57,16 +59,15 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     const recipient: Address = encodePeerId(peerId);
     const hashes: Base64[] = await this.fetchMetadata(recipient);
     const fragmentStrings: string[] = await this.fetchFragments(hashes);
-
     const fragments: MessageFragment[] = fragmentStrings.map(MessageProto.tryParse).filter(isMessageFragment);
 
-    const puzzlePieces: Record<Uuid, Set<Base64>> = fragments.reduce((acc, fragment) => {
+    const puzzlePieces = fragments.reduce((acc: Record<Uuid, Set<Base64>>, fragment: MessageFragment) => {
       if (!acc[fragment.id]) {
         acc[fragment.id] = new Set<Base64>();
       }
       acc[fragment.id].add(fragment.content);
       return acc;
-    }, {} as Record<Uuid, Set<Base64>>);
+    }, {});
 
     const reconstructedMessages: (string | undefined)[] = await Promise.all(
       Object.values(puzzlePieces).map(async (contents) => reconstructShamirSecret(Array.from(contents)))
