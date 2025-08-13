@@ -49,7 +49,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   }
 
   protected static handleError(err: unknown, context: string): void {
-    const message: string = err instanceof Error ? err.message : String(err);
+    const message: unknown = err instanceof Error ? err.message : err;
     console.error(`Error ${context}:`, message);
   }
 

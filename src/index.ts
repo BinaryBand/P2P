@@ -70,7 +70,7 @@ async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void
   console.log("Bootstrapping with peer:", peerId.toString());
 
   // Set up inquirer to listen for a key press
-  const { signal, abort } = new AbortController();
+  const abortController = new AbortController();
   const keyPressListener = inquirer.prompt({
     type: "input",
     name: "abort",
@@ -82,15 +82,17 @@ async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void
     keyPressListener.then((answers) => {
       if (answers.abort === "q") {
         console.log("Aborting bootstrapping...");
-        abort();
+        abortController.abort();
       }
     });
 
-    const bootstrapPeer: PeerInfo = await client.peerRouting.findPeer(peerId);
-    const peer: Stream = await client.dialProtocol(bootstrapPeer.multiaddrs, MessageProto.PROTOCOL, { signal });
-    console.log("Connected to bootstrap peer:", peer.id.toString());
+    const bootstrapPeer: PeerInfo = await client.peerRouting.findPeer(peerId, { signal: abortController.signal });
+    console.log("Found bootstrap peer:", bootstrapPeer.id);
+
+    await client.dial(bootstrapPeer.multiaddrs, { signal: abortController.signal });
+    console.log("Connected to bootstrap peer:", bootstrapPeer.id);
   } catch (error) {
-    if (signal.aborted) {
+    if (abortController.signal.aborted) {
       console.log("Bootstrapping was aborted.");
     } else {
       console.error("Error during bootstrapping:", error);
