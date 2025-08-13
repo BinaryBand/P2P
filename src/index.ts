@@ -110,20 +110,21 @@ async function sendMessage(client: ClientNode, recipient: PeerId, messages: stri
   console.log("Message sent successfully!");
 }
 
+var client: ClientNode;
+
 async function main(): Promise<void> {
   console.log("Starting application...");
 
   // Prompt the user for a seed password
-  const { seedPassword } = await inquirer.prompt([
-    { type: "input", name: "seedPassword", message: "Enter a secret password:" },
-  ]);
+  const { seedPassword } = await inquirer.prompt({
+    type: "input",
+    name: "seedPassword",
+    message: "Enter a secret password:",
+  });
 
   // Generate the private key from the seed password
   const privateKey: PrivateKey = await getPrivateKeyFromSeed(seedPassword);
-  const client: ClientNode = await getNewClient(
-    ["/ip4/0.0.0.0/udp/0/webrtc-direct", "/ip4/127.0.0.1/tcp/0/ws"],
-    privateKey
-  );
+  client = await getNewClient(["/ip4/0.0.0.0/udp/0/webrtc-direct", "/ip4/127.0.0.1/tcp/0/ws"], privateKey);
 
   await client.start();
   console.log("Client started with ID:", client.peerId.toString(), "Please wait for connections...");
@@ -177,7 +178,6 @@ async function main(): Promise<void> {
         case "exit":
           running = false;
           console.log("Exiting...");
-          await client.stop();
           break;
         default:
           console.log("Invalid action. Please try again.");
@@ -192,7 +192,12 @@ async function main(): Promise<void> {
   process.exit(0);
 }
 
-main().catch((error) => {
-  console.error("An error occurred:", error);
-  process.exit(1);
-});
+main()
+  .catch((error) => {
+    console.error("An error occurred:", error);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await client?.stop();
+    console.log("Cleanup complete.");
+  });

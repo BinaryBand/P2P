@@ -1,12 +1,12 @@
 import { IdentifyResult, Libp2pEvents, PeerId, TypedEventTarget } from "@libp2p/interface";
 import { Components } from "libp2p/dist/src/components";
-import { LRUCache } from "lru-cache";
 
 import { bytesToBase64, decodeAddress, encode, encodePeerId } from "../tools/typing.js";
 import { blake2b, blake3, totp } from "../tools/cryptography.js";
 import { orderPeers } from "../tools/routing.js";
 import { assert } from "../tools/utils.js";
 import BaseProto from "./base-proto.js";
+import DistanceCache from "../helpers/cache.js";
 
 export interface HandshakeEvents extends ProtocolEvents {
   [HandshakeTypes.InitiationRequest]: CustomEvent<Parcel<InitiationRequest>>;
@@ -27,12 +27,11 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   private static readonly DEFAULT_PASSPHRASE: string = "reconcile-stranger-clash";
   private static readonly MAX_RECURSION_DEPTH: number = 5; // Maximum depth for recursive nearest peer search
   private static readonly PEER_AUDIT_INTERVAL: number = 20_000; // 20 seconds
-  private static readonly PEER_FRESHNESS_THRESHOLD: number = 60_000; // 1 minute
-  private static readonly AUDIT_NET_SIZE: number = 10;
+  private static readonly NEIGHBORHOOD_SIZE: number = 10; // Nearest 10 peers
 
   private events: TypedEventTarget<Libp2pEvents>;
   private peerAuditTimer?: NodeJS.Timeout;
-  private peersCache: LRUCache<Address, PeerInfo> = new LRUCache({ max: 256 });
+  private peersCache: DistanceCache = new DistanceCache(this.address);
 
   constructor(
     components: Components,
@@ -53,9 +52,16 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     return bytesToBase64(key);
   }
 
-  public async getNeighbors(n: number = 10, role?: Role): Promise<Address[]> {
-    const addressHash: Base64 = bytesToBase64(blake3(this.address));
-    return this.getNearestPeers(addressHash, n, role ?? this.role);
+  private addPeer(peerId: PeerId, role: Role): void {
+    const address: Address = encodePeerId(peerId);
+    this.peersCache.add(address, { peerId, role, timestamp: Date.now() });
+  }
+
+  public getNeighbors(n: number = HandshakeProto.NEIGHBORHOOD_SIZE): Address[] {
+    return this.peersCache
+      .getTop(n)
+      .map(({ peerId }) => peerId)
+      .map(encodePeerId);
   }
 
   /**
@@ -66,7 +72,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
    * @param payload - The request payload without the `stamp` property.
    * @returns The payload object with an added `stamp` property containing the Base64-encoded signature.
    */
-  protected stampRequest<T extends ReqData>(payload: Omit<T, "stamp">): T {
+  protected stampRequest<T extends ReqData>(payload: Unstamped<T>): T {
     const data: string = JSON.stringify({ ...payload, stamp: undefined });
     const buffer: Uint8Array = encode(data);
 
@@ -104,7 +110,8 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       return true;
     }
 
-    otp = totp(this.initiationToken, Date.now() - 30_000); // Check for a 30-second window
+    // Check for a 30-second window
+    otp = totp(this.initiationToken, Date.now() - 30_000);
     expectedSig = blake2b(buffer, otp);
     return bytesToBase64(expectedSig) === payload.stamp;
   }
@@ -118,7 +125,8 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
    */
   protected async requestPulse(peerId: PeerId): Promise<void> {
     try {
-      const request: PingRequest = this.stampRequest({ type: HandshakeTypes.PingRequest });
+      const prepped: Unstamped<PingRequest> = { type: HandshakeTypes.PingRequest };
+      const request: PingRequest = this.stampRequest(prepped);
       const response: Return<PingResponse> = await this.sendRequest(peerId, request);
       assert(response.success, `Failed to verify pulse request from ${peerId}`);
 
@@ -130,13 +138,12 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   }
 
   private getNearestLocalPairs(hash: Base64, n: number): PeerDistancePair[] {
-    const candidates: Address[] = [this.address, ...this.peersCache.keys()];
-    const distances: PeerDistancePair[] = orderPeers(hash, candidates);
-    return distances.slice(0, n);
+    const candidates: Address[] = [this.address, ...this.peersCache.keys];
+    return orderPeers(hash, candidates, n);
   }
 
-  protected getNearestLocalPeers(hash: Base64, n: number): Address[] {
-    return this.getNearestLocalPairs(hash, n).map(({ peer }) => peer);
+  private getNearestLocalPeers(hash: Base64, n: number = HandshakeProto.NEIGHBORHOOD_SIZE): Address[] {
+    return this.getNearestLocalPairs(hash, n).map(({ address }) => address);
   }
 
   private async getNearestRemotePeers(address: Address, hash: Base64, n: number, role: Role): Promise<Address[]> {
@@ -146,12 +153,9 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
 
     try {
       const peerId: PeerId = decodeAddress(address);
-      const request: GetNeighborsRequest = this.stampRequest({
-        n,
-        role,
-        hash,
-        type: HandshakeTypes.GetNeighborsRequest,
-      });
+
+      const prepped: Unstamped<GetNeighborsRequest> = { n, role, hash, type: HandshakeTypes.GetNeighborsRequest };
+      const request: GetNeighborsRequest = this.stampRequest(prepped);
       const response: Return<GetNeighborsResponse> = await this.sendRequest(peerId, request);
       assert(response.success, `Failed to find nearest peers for ${peerId}`);
 
@@ -181,7 +185,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     for (let i: number = 0; i < HandshakeProto.MAX_RECURSION_DEPTH; i++) {
       // Query the wide network for more peers
       const wideNetPromises: Promise<Address[]>[] = peers
-        .map(({ peer }: PeerDistancePair) => this.getNearestRemotePeers(peer, hash, n, role))
+        .map(({ address }: PeerDistancePair) => this.getNearestRemotePeers(address, hash, n, role))
         .map((promise: Promise<Address[]>) => this.getWithTimeout(promise, HandshakeProto.HEAVY_CALLBACK_TIMEOUT));
 
       // Wait for all wide network queries to settle
@@ -190,7 +194,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
         .filter((res): res is PromiseFulfilledResult<Address[]> => res.status === "fulfilled")
         .flatMap(({ value }: PromiseFulfilledResult<Address[]>) => value);
 
-      peers = orderPeers(hash, validResults);
+      peers = orderPeers(hash, validResults, n);
 
       const currMinDistance: number = peers[0]?.distance ?? prevMinDistance;
       if (currMinDistance >= prevMinDistance || peers.length === 0) {
@@ -200,19 +204,11 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       prevMinDistance = currMinDistance;
     }
 
-    return peers.map((pair: PeerDistancePair) => pair.peer).slice(0, n);
-  }
-
-  private addPeer(peerId: PeerId, role: Role): void {
-    const address: Address = encodePeerId(peerId);
-    const timestamp: number = Date.now();
-    this.peersCache.set(address, { peerId, role, timestamp });
+    return peers.map(({ address }) => address).slice(0, n);
   }
 
   private peerDropped({ detail }: CustomEvent<PeerId>): void {
-    if (this.peersCache.has(encodePeerId(detail))) {
-      this.peersCache.delete(encodePeerId(detail));
-    }
+    this.peersCache.delete(encodePeerId(detail));
   }
 
   private async initiateHandshake({ detail }: CustomEvent<IdentifyResult>): Promise<void> {
@@ -221,7 +217,8 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     }
 
     try {
-      const request: InitiationRequest = this.stampRequest({ role: this.role, type: HandshakeTypes.InitiationRequest });
+      const prepped: Unstamped<InitiationRequest> = { role: this.role, type: HandshakeTypes.InitiationRequest };
+      const request: InitiationRequest = this.stampRequest(prepped);
       const response: Return<PingResponse> = await this.sendRequest(detail.peerId, request);
       assert(response.success, `Failed to initiate handshake with ${detail.peerId}`);
 
@@ -246,30 +243,12 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     return { peers, type: HandshakeTypes.GetNeighborsResponse };
   }
 
-  private peerIsStale(peerId: PeerId, now: number = Date.now()): boolean {
-    const address: Address = encodePeerId(peerId);
-    const peerData: PeerInfo | undefined = this.peersCache.get(address);
-    if (!peerData) {
-      return true;
-    }
-
-    const age: number = now - peerData.timestamp;
-    return age > HandshakeProto.PEER_FRESHNESS_THRESHOLD;
-  }
-
+  // Periodically audits peers to ensure they are still reachable
   private async auditPeers(): Promise<void> {
-    const now: number = Date.now();
-
-    Array.from(this.peersCache.entries())
-      .filter(([_addr, { peerId }]) => this.peerIsStale(peerId, now))
-      .map(([addr]) => decodeAddress(addr))
-      .forEach(this.requestPulse.bind(this));
-
-    this.getNeighbors(HandshakeProto.AUDIT_NET_SIZE, "tower").then((neighbors: Address[]) => {
-      neighbors.forEach((neighbor: Address) => {
-        const peerId: PeerId = decodeAddress(neighbor);
-        this.addPeer(peerId, "tower");
-      });
+    const neighbors: Address[] = this.getNeighbors(HandshakeProto.NEIGHBORHOOD_SIZE);
+    neighbors.forEach((neighbor: Address) => {
+      const peerId: PeerId = decodeAddress(neighbor);
+      this.addPeer(peerId, "tower");
     });
   }
 
@@ -294,8 +273,6 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     this.removeEventListener(HandshakeTypes.GetNeighborsRequest, this.onPeersRequest.bind(this));
     this.events.removeEventListener("peer:identify", this.initiateHandshake.bind(this));
     this.events.removeEventListener("peer:disconnect", this.peerDropped.bind(this));
-
-    this.peersCache.clear();
 
     if (this.peerAuditTimer !== undefined) {
       clearInterval(this.peerAuditTimer);

@@ -234,7 +234,6 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
 
   public async stop(): Promise<void> {
     await this.registrar.unhandle(BaseProto.PROTOCOL);
-    this.callbackMap.clear();
     this.connectionCache.clear();
   }
 }

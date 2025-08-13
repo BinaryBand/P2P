@@ -30,11 +30,13 @@ interface PeerInfo {
 }
 
 interface PeerDistancePair {
-  peer: Address;
+  address: Address;
   distance: number;
 }
 
 /* Requests */
+
+type Unstamped<T extends ReqData> = Omit<T, "stamp">;
 
 interface InitiationRequest {
   role: Role;
@@ -142,12 +144,8 @@ interface Metadata {
 interface DataFragment {
   hashKey: Base64;
   data: string;
-  readonly timestamp: number;
+  timestamp: number;
 }
-
-// id INTEGER PRIMARY KEY AUTOINCREMENT,
-// hashKey TEXT NOT NULL,
-// hash TEXT NOT NULL
 
 type Message = string;
 

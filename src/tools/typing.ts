@@ -12,6 +12,7 @@ export type Base64 = `${Formats.Base64},${string}`;
 export enum Formats {
   Base58 = "base58",
   Base64 = "base64",
+  UTF = "utf-8",
 }
 
 export const decode = TextDecoder.prototype.decode.bind(new TextDecoder());

@@ -38,9 +38,9 @@ export function setMetadataDb(hashKey: Base64, hashes: Base64[], timestamp: numb
         if (err) return reject(err);
 
         const checkStmt: Statement = db.prepare(
-          `SELECT COUNT(*) AS count FROM Metadata WHERE hashKey = ? AND hash = ?`
+          "SELECT COUNT(*) AS count FROM Metadata WHERE hashKey = ? AND hash = ?"
         );
-        const insertStmt: Statement = db.prepare(`INSERT INTO Metadata (hashKey, hash, timestamp) VALUES (?, ?, ?)`);
+        const insertStmt: Statement = db.prepare("INSERT INTO Metadata (hashKey, hash, timestamp) VALUES (?, ?, ?)");
 
         // Only add unique key, value pairs
         const insertPromises: Promise<void>[] = hashes.map(
@@ -50,7 +50,6 @@ export function setMetadataDb(hashKey: Base64, hashes: Base64[], timestamp: numb
                 if (err === null && row?.count === 0) {
                   insertStmt.run(hashKey, hash, timestamp);
                 }
-
                 res();
               });
             })
@@ -60,20 +59,23 @@ export function setMetadataDb(hashKey: Base64, hashes: Base64[], timestamp: numb
 
         insertStmt.finalize();
         checkStmt.finalize();
-        db.run("COMMIT", (err: unknown) => {
-          if (err) return reject(err);
-          resolve();
-        });
+      });
+
+      db.run("COMMIT", (err: unknown) => {
+        if (err) return reject(err);
+        resolve();
       });
     });
   });
 }
 
 export function getMetadataDb(hashKey: Base64): Promise<Base64[]> {
-  return new Promise((res: (val: Base64[]) => void) => {
-    const query = `SELECT * FROM Metadata WHERE hashKey = ?`;
-    db.all(query, [hashKey], (_err, rows: Metadata[]) => {
-      res(rows.map((row: Metadata) => row.hash).filter(isBase64));
+  return new Promise((resolve, reject) => {
+    const query: string = `SELECT * FROM Metadata WHERE hashKey = ?`;
+
+    db.all(query, [hashKey], (err: unknown, rows: Metadata[]) => {
+      if (err) return reject(err);
+      resolve(rows.map((row: Metadata) => row.hash).filter(isBase64));
     });
   });
 }
@@ -84,35 +86,51 @@ export function setFragmentsDb(fragments: string[], timestamp: number = Date.now
       db.run("BEGIN TRANSACTION", async (err: unknown) => {
         if (err) return reject(err);
 
+        const checkStmt: Statement = db.prepare("SELECT COUNT(*) AS count FROM DataFragment WHERE hashKey = ?");
         const insertStmt: Statement = db.prepare(
-          `INSERT INTO DataFragment (hashKey, data, timestamp) VALUES (?, ?, ?)`
+          "INSERT INTO DataFragment (hashKey, data, timestamp) VALUES (?, ?, ?)"
         );
 
-        fragments.forEach((frag: string) => {
-          const hashKey: Base64 = SwarmProto.hashFromData(frag);
-          insertStmt.run(hashKey, frag, timestamp);
-        });
+        // Only add unique key, value pairs
+        const insertPromises: Promise<void>[] = fragments.map(
+          (frag: string) =>
+            new Promise<void>((res) => {
+              const hashKey: Base64 = SwarmProto.hashFromData(frag);
+              checkStmt.get([hashKey], (err, row?: { count: number }) => {
+                if (err === null && row?.count === 0) {
+                  insertStmt.run(hashKey, frag, timestamp);
+                }
+                res();
+              });
+            })
+        );
+
+        await Promise.all(insertPromises).catch(reject);
 
         insertStmt.finalize();
-        db.run("COMMIT", (err: unknown) => {
-          if (err) return reject(err);
-          resolve();
-        });
+        checkStmt.finalize();
+      });
+
+      db.run("COMMIT", (err: unknown) => {
+        if (err) return reject(err);
+        resolve();
       });
     });
   });
 }
 
 export function getDataFragmentsDb(hashKeys: Base64[]): Promise<string[]> {
-  return new Promise((res: (val: string[]) => void) => {
-    const query = `SELECT * FROM DataFragment WHERE hashKey = ?`;
+  return new Promise((resolve, reject) => {
+    const placeholders: string = hashKeys.map(() => "?").join(",");
+    const query: string = `SELECT * FROM DataFragment WHERE hashKey IN (${placeholders})`;
 
-    db.all(query, hashKeys, (_err, rows: DataFragment[]) => {
-      const fragments: string[] = rows
-        .filter(({ hashKey, data }) => SwarmProto.verifyDataFragment(hashKey, data))
-        .map(({ data }) => data);
+    db.all(query, hashKeys, (err: unknown, rows?: DataFragment[]) => {
+      if (err) return reject(err);
 
-      res(fragments);
+      const fragments: string[] =
+        rows?.filter(({ hashKey, data }) => SwarmProto.verifyDataFragment(hashKey, data)).map(({ data }) => data) ?? [];
+
+      resolve(fragments);
     });
   });
 }
