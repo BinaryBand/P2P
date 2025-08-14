@@ -1,5 +1,5 @@
 import { base64ToBytes, isAddress, isBase64, isFragment } from "./typing.js";
-import { blake3 } from "./cryptography.js";
+import { genericHash } from "./cryptography.js";
 import { assert } from "./utils.js";
 
 import { Heap } from "heap-js";
@@ -14,8 +14,8 @@ function countSetBits(num: number): number {
 }
 
 function _calculateDistance(a: Address | Fragment, b: Address | Fragment): number {
-  const aHash: Uint8Array = blake3(a);
-  const bHash: Uint8Array = blake3(b);
+  const aHash: Uint8Array = genericHash(a);
+  const bHash: Uint8Array = genericHash(b);
   return _calculateDistance_bytes(aHash, bHash);
 }
 
@@ -65,14 +65,14 @@ export function calculateDistance(a: unknown, b: unknown): number {
  * @param n - The maximum number of peers to return.
  * @returns An array of `PeerDistancePair` objects, each containing a peer and its distance to the query, sorted by distance.
  */
-export function orderPeers(query: Base64, candidates: Address[], n: number): PeerDistancePair[] {
-  const key: Uint8Array = blake3(query);
-  const minHeap = new Heap<PeerDistancePair>((a, b) => a.distance - b.distance);
+export function orderPeers(query: Base64, candidates: Address[], n: number): DistancePair<Address>[] {
+  const key: Uint8Array = genericHash(query);
+  const minHeap = new Heap<DistancePair<Address>>((a, b) => a.distance - b.distance);
 
   for (const address of candidates) {
-    const peerCode: Uint8Array = blake3(address);
+    const peerCode: Uint8Array = genericHash(address);
     const distance: number = calculateDistance(key, peerCode);
-    minHeap.push({ address, distance });
+    minHeap.push({ value: address, distance });
     if (minHeap.size() > n) {
       minHeap.pop();
     }

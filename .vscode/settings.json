@@ -1,11 +1,11 @@
 {
   "cSpell.words": [
     "AUTOINCREMENT",
-    "byteify",
     "chainsafe",
     "dnsaddr",
     "dropoff",
     "Encrypters",
+    "generichash",
     "gossipsub",
     "libp2p",
     "mdns",

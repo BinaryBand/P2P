@@ -1,15 +1,12 @@
 import { Components } from "libp2p/dist/src/components";
-import { PeerId } from "@libp2p/interface";
-
 import { LRUCache } from "lru-cache";
-// import QuickLRU from "quick-lru";
 
 import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
 
 import { setMetadataDb, getMetadataDb, setFragmentsDb, getDataFragmentsDb } from "../helpers/database.js";
-import { bytesToBase64, decodeAddress, isFragment, Role } from "../tools/typing.js";
+import { bytesToBase64, isFragment, Role } from "../tools/typing.js";
 import { calculateDistance, orderPeers } from "../tools/routing.js";
-import { blake3 } from "../tools/cryptography.js";
+import { genericHash } from "../tools/cryptography.js";
 import { assert } from "../tools/utils.js";
 
 export interface SwarmEvents extends HandshakeEvents {
@@ -52,14 +49,12 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private storeMetadataLocally(hashKey: Base64, metadata: Base64[]): void {
-    // Save to local db
     setMetadataDb(hashKey, metadata);
 
     // Update cache
     let cacheSet: Set<Base64> | undefined = this.metadataCache.get(hashKey);
     if (cacheSet === undefined) {
       cacheSet = new Set();
-      this.metadataCache.set(hashKey, cacheSet);
     }
     metadata.forEach((hash: Base64) => cacheSet.add(hash));
   }
@@ -71,10 +66,9 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     }
 
     try {
-      const peerId: PeerId = decodeAddress(holder);
       const prepped: Unstamped<SetMetadataRequest> = { hashKey, metadata, type: SwarmTypes.SetMetadataRequest };
       const request: SetMetadataRequest = this.stampRequest(prepped);
-      await this.sendRequest(peerId, request);
+      await this.sendRequest(holder, request);
       return true;
     } catch (err: unknown) {
       this.handleLog("warn", err, "storeMetadataRemotely");
@@ -102,11 +96,10 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     }
 
     try {
-      const peerId: PeerId = decodeAddress(holder);
       const prepped: Unstamped<GetMetadataRequest> = { hashKey, type: SwarmTypes.GetMetadataRequest };
       const request: GetMetadataRequest = this.stampRequest(prepped);
-      const response: Return<GetMetadataResponse> = await this.sendRequest(peerId, request);
-      assert(response.success, `Failed to get metadata from ${peerId}`);
+      const response: Return<GetMetadataResponse> = await this.sendRequest(holder, request);
+      assert(response.success, `Failed to get metadata from ${holder}`);
 
       return response.data.metadata;
     } catch (err: unknown) {
@@ -124,7 +117,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
    */
   protected async storeMetadata(owner: Address, hashes: Base64[]): Promise<void> {
     this.logger.info("storeMetadata", { owner, hashes });
-    const ownerHash: Base64 = bytesToBase64(blake3(owner));
+    const ownerHash: Base64 = bytesToBase64(genericHash(owner));
     const candidates: Address[] = await this.getNearestPeers(ownerHash, SwarmProto.SWARM_SIZE, Role.Tower);
     candidates.map((addr: Address) => this.storeMetadataRemotely(addr, ownerHash, hashes));
   }
@@ -140,7 +133,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
    */
   protected async fetchMetadata(owner: Address): Promise<Base64[]> {
     this.logger.info("fetchMetadata", { owner });
-    const ownerHash: Base64 = bytesToBase64(blake3(owner));
+    const ownerHash: Base64 = bytesToBase64(genericHash(owner));
 
     const candidates: Address[] = await this.getNearestPeers(ownerHash, SwarmProto.SWARM_SIZE, Role.Tower);
     const promises: Promise<Base64[]>[] = candidates.flatMap((addr) => this.getRemoteMetadata(addr, ownerHash));
@@ -162,17 +155,16 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     });
   }
 
-  private async storeFragmentsRemotely(address: Address, fragments: Fragment[]): Promise<boolean> {
-    if (this.address === address) {
+  private async storeFragmentsRemotely(holder: Address, fragments: Fragment[]): Promise<boolean> {
+    if (this.address === holder) {
       this.storeFragmentsLocally(fragments);
       return true;
     }
 
     try {
-      const peerId: PeerId = decodeAddress(address);
       const prepped: Unstamped<SetFragmentsRequest> = { fragments, type: SwarmTypes.SetFragmentsRequest };
       const request: SetFragmentsRequest = this.stampRequest(prepped);
-      await this.sendRequest(peerId, request);
+      await this.sendRequest(holder, request);
       return true;
     } catch (err: unknown) {
       this.handleLog("warn", err, "storeFragmentsRemotely");
@@ -208,11 +200,10 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     }
 
     try {
-      const peerId: PeerId = decodeAddress(holder);
       const prepped: Unstamped<GetFragmentsRequest> = { hashes, type: SwarmTypes.GetFragmentsRequest };
       const request: GetFragmentsRequest = this.stampRequest(prepped);
-      const response: Return<GetFragmentsResponse> = await this.sendRequest(peerId, request);
-      assert(response.success, `Failed to find nearest peers for ${peerId}`);
+      const response: Return<GetFragmentsResponse> = await this.sendRequest(holder, request);
+      assert(response.success, `Failed to find nearest peers for ${holder}`);
 
       return response.data.fragments;
     } catch (err: unknown) {
@@ -304,26 +295,24 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   // Periodically ensure neighbors' data stays up-to-date
   private async lightAudit(): Promise<void> {
     const neighbors: Address[] = this.getNeighbors();
-    const addrHash: Uint8Array = blake3(this.address);
+    const addrHash: Uint8Array = genericHash(this.address);
     const maxDistance: number = neighbors
-      .map((addr: Address) => calculateDistance(addrHash, blake3(addr)))
+      .map((addr: Address) => calculateDistance(addrHash, genericHash(addr)))
       .reduce((a: number, b: number) => Math.max(a, b), 0);
 
     // Map each metadata to its nearest candidate peers
     for (const [key, metadataSet] of this.metadataCache.entries()) {
       // Only consider metadata that is nearby
-      const distance: number = calculateDistance(addrHash, blake3(key));
+      const distance: number = calculateDistance(addrHash, genericHash(key));
       if (maxDistance < distance) continue;
 
-      const topCandidates: Address[] = orderPeers(key, neighbors, SwarmProto.SWARM_SIZE).map(({ address }) => address);
+      const topCandidates: Address[] = orderPeers(key, neighbors, SwarmProto.SWARM_SIZE).map(({ value }) => value);
 
       topCandidates.forEach((neighbor: Address) => {
         const metadata: Base64[] = [...metadataSet];
         const prepped: Unstamped<SetMetadataRequest> = { hashKey: key, metadata, type: SwarmTypes.SetMetadataRequest };
         const metadataRequest: SetMetadataRequest = this.stampRequest(prepped);
-
-        const peerId: PeerId = decodeAddress(neighbor);
-        this.sendRequest(peerId, metadataRequest);
+        this.sendRequest(neighbor, metadataRequest);
       });
     }
 

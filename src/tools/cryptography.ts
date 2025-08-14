@@ -1,47 +1,47 @@
-import { blake2b as _blake2b } from "@noble/hashes/blake2.js";
-import { blake3 as _blake3 } from "@noble/hashes/blake3.js";
 import { combine, split } from "shamir-secret-sharing";
-import { LRUCache } from "lru-cache";
-import speakeasy from "speakeasy";
 
-import { base64ToBytes, bytesToBase64, stringify, toBuffer, Formats } from "./typing.js";
+import sodium from "libsodium-wrappers";
+
+import { LRUCache } from "lru-cache";
+
+import { base64ToBytes, bytesToBase64, stringify, toBuffer } from "./typing.js";
 
 const hashCache = new LRUCache<string, Uint8Array>({ max: 256 });
 
-export function blake2b(input: Uint8Array, key?: Uint8Array): Uint8Array {
-  return _blake2b(input, { dkLen: 32, key });
-}
+export { sodium };
 
-export function blake3(input: Encoded, key?: Uint8Array): Uint8Array;
-export function blake3(input: Uint8Array, key?: Uint8Array): Uint8Array;
-export function blake3(input: Encoded | Uint8Array, key?: Uint8Array): Uint8Array {
+export function genericHash(input: Encoded, key?: Uint8Array): Uint8Array;
+export function genericHash(input: Uint8Array, key?: Uint8Array): Uint8Array;
+export function genericHash(input: Encoded | Uint8Array, key?: Uint8Array): Uint8Array {
   if (input instanceof Uint8Array) {
-    return _blake3(input, { dkLen: 32, key });
+    return sodium.crypto_generichash(32, input, key);
   }
 
   let hash: Uint8Array | undefined = hashCache.get(input);
   if (hash === undefined) {
-    hash = _blake3(input, { dkLen: 32, key });
+    hash = sodium.crypto_generichash(32, input, key);
     hashCache.set(input, hash);
   }
 
   return hash;
 }
 
-export function totp(secret: Uint8Array, targetTime?: number): Uint8Array {
-  const base64Secret: Base64 = bytesToBase64(secret);
-  const time: number = Math.floor((targetTime ?? Date.now()) / 1000);
-  const otp: string = speakeasy.totp({ secret: base64Secret, encoding: "base64", time });
-  return base64ToBytes(`${Formats.Base64},${otp}`);
+const TIME_STEP: number = 30_000;
+
+export function totp(secret: Uint8Array, targetTime: number = Date.now(), timeStep: number = TIME_STEP): Uint8Array {
+  const time: number = Math.floor(targetTime / timeStep);
+  const timeBuffer: Uint8Array = new Uint8Array(4);
+  timeBuffer.set([time >>> 12, time >>> 8, time >>> 4, time], 0);
+  return sodium.crypto_generichash(32, timeBuffer, secret);
 }
 
-export async function shamirSecretSharing(message: string, shares: number, threshold: number): Promise<Base64[]> {
+export async function shamirSecretSharing(message: Message, shares: number, threshold: number): Promise<Base64[]> {
   const messageBuffer: Uint8Array = toBuffer(JSON.stringify(message));
   const fragments: Uint8Array[] = await split(messageBuffer, shares, threshold);
   return fragments.map(bytesToBase64);
 }
 
-export async function reconstructShamirSecret(shares: Base64[]): Promise<string | undefined> {
+export async function reconstructShamirSecret(shares: Base64[]): Promise<Message | undefined> {
   const fragments: Uint8Array[] = shares.map(base64ToBytes);
   const secret: Uint8Array = await combine(fragments);
   return stringify(secret);

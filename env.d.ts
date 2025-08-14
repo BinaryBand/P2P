@@ -32,10 +32,10 @@ interface PeerInfo {
   timestamp: number;
 }
 
-interface PeerDistancePair {
-  address: Address;
+type DistancePair<T> = {
+  value: T;
   distance: number;
-}
+};
 
 /* Requests */
 

@@ -8,7 +8,7 @@ import { kadDHT } from "@libp2p/kad-dht";
 import { ping } from "@libp2p/ping";
 import { mdns } from "@libp2p/mdns";
 
-import { Libp2p, PeerId, PeerInfo, PrivateKey, Stream } from "@libp2p/interface";
+import { Libp2p, PeerId, PeerInfo, PrivateKey } from "@libp2p/interface";
 import { peerIdFromString } from "@libp2p/peer-id";
 import { keys } from "@libp2p/crypto";
 
@@ -19,7 +19,7 @@ import inquirer from "inquirer";
 
 import MessageProto, { MessageEvents } from "./protocols/message-proto.js";
 import { toBuffer, encodePeerId, isAddress } from "./tools/typing.js";
-import { blake3 } from "./tools/cryptography.js";
+import { genericHash } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
 const bootstrapNodes: string[] = [
@@ -58,7 +58,7 @@ function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?:
 
 async function getPrivateKeyFromSeed(password: string): Promise<PrivateKey> {
   const passwordBuffer: Uint8Array = toBuffer(password);
-  const seed: Uint8Array = blake3(passwordBuffer);
+  const seed: Uint8Array = genericHash(passwordBuffer);
   return await keys.generateKeyPairFromSeed("Ed25519", seed);
 }
 

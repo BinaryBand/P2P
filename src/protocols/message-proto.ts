@@ -22,7 +22,7 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     return (params: Components) => new MessageProto(params, passphrase);
   }
 
-  private async uploadMessage(text: string): Promise<Base64[]> {
+  private async uploadMessage(text: Message): Promise<Base64[]> {
     const fragments: Base64[] = await shamirSecretSharing(
       text,
       MessageProto.SHAMIR_SHARES,
@@ -37,10 +37,12 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     return this.storeFragments(fragmentStrings);
   }
 
-  public async sendMessages(recipient: PeerId, messages: string[]): Promise<void> {
-    this.logger.info("sendMessages", { recipient, messages });
+  public async sendMessages(recipient: PeerId, texts: string[]): Promise<void> {
+    this.logger.info("sendMessages", { recipient, texts });
 
-    const hashes: Base64[][] = await Promise.all(Array.from(messages).map(this.uploadMessage.bind(this)));
+    const messages: Message[] = texts;
+
+    const hashes: Base64[][] = await Promise.all(messages.map(this.uploadMessage.bind(this)));
     const address: Address = encodePeerId(recipient);
     await this.storeMetadata(address, hashes.flat());
   }
@@ -63,7 +65,7 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
       return acc;
     }, {});
 
-    const reconstructedMessages: (string | undefined)[] = await Promise.all(
+    const reconstructedMessages: (Message | undefined)[] = await Promise.all(
       Object.values(puzzlePieces).map(async (contents) => reconstructShamirSecret(Array.from(contents)))
     );
 

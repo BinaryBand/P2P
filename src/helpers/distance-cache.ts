@@ -1,11 +1,6 @@
 import { calculateDistance } from "../tools/routing.js";
 import { Heap } from "heap-js";
 
-type DistancePair<T> = {
-  address: T;
-  distance: number;
-};
-
 export default class DistanceCache<T extends Encoded, U> {
   private addressMap: Map<T, U> = new Map();
   private neighbors = new Heap<DistancePair<T>>((a, b) => a.distance - b.distance); // Nearest neighbors
@@ -23,10 +18,12 @@ export default class DistanceCache<T extends Encoded, U> {
   }
 
   public add(key: T, value: U): void {
-    const distance: number = calculateDistance(key, this.address);
-    const pair: DistancePair<T> = { address: key, distance };
-    this.neighbors.push(pair);
-    this.addressMap.set(key, value); // Maintain a map for quick lookups
+    if (!this.addressMap.has(key)) {
+      const distance: number = calculateDistance(key, this.address);
+      const pair: DistancePair<T> = { value: key, distance };
+      this.neighbors.push(pair);
+      this.addressMap.set(key, value); // Maintain a map for quick lookups
+    }
   }
 
   public has(address: T): boolean {
@@ -40,17 +37,17 @@ export default class DistanceCache<T extends Encoded, U> {
   public getTop(n: number): Array<U> {
     const topPairs: DistancePair<T>[] = this.neighbors.top(n);
     return topPairs
-      .map(({ address }) => this.addressMap.get(address))
+      .map(({ value }) => this.addressMap.get(value))
       .filter((peerInfo): peerInfo is U => peerInfo !== undefined);
   }
 
-  public delete(address: T): void {
-    if (this.addressMap.delete(address)) {
+  public delete(key: T): void {
+    if (this.addressMap.delete(key)) {
       const abandonShip = new Heap<DistancePair<T>>((a, b) => a.distance - b.distance);
       const tempArray = this.neighbors.toArray();
 
       for (const pair of tempArray) {
-        if (pair.address !== address) {
+        if (pair.value !== key) {
           abandonShip.push(pair);
         }
       }

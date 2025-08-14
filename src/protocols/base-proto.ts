@@ -14,12 +14,11 @@ import {
   encodePeerId,
   stringify,
   toBuffer,
-  bytesToBase64,
+  Formats,
 } from "../tools/typing.js";
 import { getLogger, Logger } from "../helpers/logger.js";
+import { sodium } from "../tools/cryptography.js";
 import { assert } from "../tools/utils.js";
-
-import { blake3 } from "../tools/cryptography.js";
 
 export enum BaseTypes {
   Return = "base:return",
@@ -178,20 +177,16 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   }
 
   protected async sendRequest<T extends ReqData, U extends ResData>(
-    peerId: PeerId,
+    receiver: Address,
     payload: T
   ): Promise<Acceptance<U>> {
-    const fingerprintString: string = JSON.stringify(payload);
-    const fingerprintBuffer: Uint8Array = toBuffer(fingerprintString);
-    const fingerprintHash: Uint8Array = blake3(fingerprintBuffer);
-    const fingerprint: Base64 = bytesToBase64(fingerprintHash);
+    payload.stamp;
+    const fingerprint: Base64 = `${Formats.Base64},${sodium.crypto_generichash(32, payload.stamp, receiver, "base64")}`;
     if (this.requestCache.has(fingerprint)) {
-      return (await this.requestCache.get(fingerprint)!) as Acceptance<U>;
+      return this.requestCache.get(fingerprint)! as Promise<Acceptance<U>>;
     }
 
     const callbackId: Uuid = crypto.randomUUID();
-    const receiver: Address = encodePeerId(peerId);
-
     const parcel: Parcel<T> = { batch: { callbackId, payload }, receiver, sender: this.address };
     const result: Return<U> = await this.sendParcel<T, U>(parcel);
     assert(result.success, (result as Rejection).message);
