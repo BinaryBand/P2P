@@ -6,7 +6,7 @@ import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
 import BaseProto from "./base-proto.js";
 
 import { setMetadataDb, getMetadataDb, setFragmentsDb, getDataFragmentsDb } from "../helpers/database.js";
-import { bytesToBase64, decodeAddress } from "../tools/typing.js";
+import { bytesToBase64, decodeAddress, isFragment } from "../tools/typing.js";
 import { calculateDistance, orderPeers } from "../tools/routing.js";
 import { blake3 } from "../tools/cryptography.js";
 import { assert } from "../tools/utils.js";
@@ -33,7 +33,6 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   private static readonly SWARM_SIZE: number = 3;
   private static readonly MAX_STORAGE_CACHE_SIZE: number = 2048;
   private static readonly LIGHT_AUDIT_INTERVAL: number = 60_000; // 1 minute
-  private static readonly LIGHT_FRESHNESS_THRESHOLD: number = 180_000; // 3 minutes
 
   private lightAuditTimer?: NodeJS.Timeout;
   private metadataCache: LRUCache<Base64, Set<Base64>> = new LRUCache({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
@@ -47,8 +46,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return (params: Components) => new SwarmProto(params, passphrase);
   }
 
-  public static verifyDataFragment(hash: Base64, fragment?: string): boolean {
-    return fragment !== undefined && HandshakeProto.hashFromData(fragment) === hash;
+  public static verifyDataFragment(hash: Base64, fragment?: unknown): fragment is Fragment {
+    return isFragment(fragment) && HandshakeProto.hashFromData(fragment) === hash;
   }
 
   private storeMetadataLocally(hashKey: Base64, metadata: Base64[]): void {
@@ -77,7 +76,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
       await this.sendRequest(peerId, request);
       return true;
     } catch (err: unknown) {
-      BaseProto.handleError(err, "storeMetadataRemotely");
+      this.handleLog("warn", err, "storeMetadataRemotely");
       return false;
     }
   }
@@ -111,7 +110,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
       return response.data.metadata;
     } catch (err: unknown) {
-      BaseProto.handleError(err, "getRemoteMetadata");
+      this.handleLog("warn", err, "getRemoteMetadata");
       return [];
     }
   }
@@ -124,6 +123,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
    * @returns A promise that resolves when the metadata has been stored on all nearest peers.
    */
   protected async storeMetadata(owner: Address, hashes: Base64[]): Promise<void> {
+    this.logger.info("storeMetadata", { owner, hashes });
     const ownerHash: Base64 = bytesToBase64(blake3(owner));
     const candidates: Address[] = await this.getNearestPeers(ownerHash, SwarmProto.SWARM_SIZE, "tower");
     candidates.map((addr: Address) => this.storeMetadataRemotely(addr, ownerHash, hashes));
@@ -139,6 +139,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
    * @returns A promise that resolves to an array of unique Base64-encoded metadata entries.
    */
   protected async fetchMetadata(owner: Address): Promise<Base64[]> {
+    this.logger.info("fetchMetadata", { owner });
     const ownerHash: Base64 = bytesToBase64(blake3(owner));
 
     const candidates: Address[] = await this.getNearestPeers(ownerHash, SwarmProto.SWARM_SIZE, "tower");
@@ -151,7 +152,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     return metadata;
   }
 
-  private storeFragmentsLocally(fragments: string[]): Base64[] {
+  private storeFragmentsLocally(fragments: Fragment[]): Base64[] {
     setFragmentsDb(fragments);
 
     return fragments.map((frag) => {
@@ -163,7 +164,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     });
   }
 
-  private async storeFragmentsRemotely(address: Address, fragments: string[]): Promise<boolean> {
+  private async storeFragmentsRemotely(address: Address, fragments: Fragment[]): Promise<boolean> {
     if (this.address === address) {
       this.storeFragmentsLocally(fragments);
       return true;
@@ -176,27 +177,34 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
       await this.sendRequest(peerId, request);
       return true;
     } catch (err: unknown) {
-      BaseProto.handleError(err, "storeFragmentsRemotely");
+      this.handleLog("warn", err, "storeFragmentsRemotely");
       return false;
     }
   }
 
-  private async getLocalFragments(hashes: Base64[]): Promise<string[]> {
-    const cachedHashes: [Base64, string?][] = hashes.map((hash: Base64) => [hash, this.storageCache.get(hash)?.data]);
-    const fromCache = new Set<string>(
+  private async getLocalFragments(hashes: Base64[]): Promise<Fragment[]> {
+    const cachedHashes: [Base64, Fragment?][] = hashes.map((hash: Base64) => [hash, this.storageCache.get(hash)?.data]);
+
+    const fromCache = new Set<Fragment>(
       cachedHashes
-        .filter((args): args is [Base64, string] => SwarmProto.verifyDataFragment(...args))
+        .filter((args): args is [Base64, Fragment] => SwarmProto.verifyDataFragment(...args))
         .map(([, frag]) => frag)
     );
 
-    const missingHashes: Base64[] = cachedHashes.filter(([, frag]) => !fromCache.has(frag ?? "")).map(([hash]) => hash);
-    const fromDb: string[] = await getDataFragmentsDb(missingHashes);
+    const missingHashes: Base64[] = cachedHashes
+      .filter(([, frag]) => !fromCache.has(frag as Fragment))
+      .map(([hash]) => hash);
+
+    const fromDb: Fragment[] = await getDataFragmentsDb(missingHashes);
     fromDb.forEach(fromCache.add.bind(fromCache));
 
-    return Array.from(fromDb);
+    const fragments: Fragment[] = Array.from(fromCache);
+    this.storeFragmentsLocally(fragments);
+
+    return fragments;
   }
 
-  private async getRemoteFragments(holder: Address, hashes: Base64[]): Promise<string[]> {
+  private async getRemoteFragments(holder: Address, hashes: Base64[]): Promise<Fragment[]> {
     if (this.address === holder) {
       return this.getLocalFragments(hashes);
     }
@@ -210,7 +218,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
 
       return response.data.fragments;
     } catch (err: unknown) {
-      BaseProto.handleError(err, "getRemoteFragments");
+      this.handleLog("warn", err, "getRemoteFragments");
       return [];
     }
   }
@@ -218,19 +226,20 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   /**
    * Stores the provided data across the nearest peers in the swarm.
    *
-   * @param data - The string data to be stored.
+   * @param fragments - The Fragment data to be stored.
    * @returns A promise that resolves to the Base64-encoded hash of the data.
    *
    * The method computes a hash from the input data, finds the nearest peers in the swarm,
    * and stores the data remotely on each of those peers. The hash is returned as a unique identifier.
    */
-  public async storeFragments(fragments: string[], n: number = SwarmProto.SWARM_SIZE): Promise<Base64[]> {
+  protected async storeFragments(fragments: Fragment[], n: number = SwarmProto.SWARM_SIZE): Promise<Base64[]> {
+    this.logger.info("storeFragments", { fragments, n });
     const hashes: Base64[] = fragments.map(SwarmProto.hashFromData);
 
     const promises: Promise<Address[]>[] = hashes.map((hash) => this.getNearestPeers(hash, n, "tower"));
     const results: Address[][] = await Promise.all(promises);
     const candidates: Address[] = Array.from(new Set(results.flat()));
-    candidates.map((addr: Address) => this.storeFragmentsRemotely(addr, fragments));
+    candidates.forEach((addr: Address) => this.storeFragmentsRemotely(addr, fragments));
 
     return hashes;
   }
@@ -244,21 +253,24 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
    *
    * @param hashes - An array of base64-encoded fragment hashes to fetch.
    * @param n - The number of nearest peers to query for each hash. Defaults to `SWARM_SIZE`.
-   * @returns A promise that resolves to an array of fetched fragment strings.
+   * @returns A promise that resolves to an array of fetched fragment Fragment.
    */
-  public async fetchFragments(hashes: Base64[], n: number = SwarmProto.SWARM_SIZE): Promise<string[]> {
+  protected async fetchFragments(hashes: Base64[], n: number = SwarmProto.SWARM_SIZE): Promise<Fragment[]> {
+    this.logger.info("fetchFragments", { hashes, n });
+
+    // Find the nearest peers for each hash
     const promises: Promise<Address[]>[] = hashes.map((hash) => this.getNearestPeers(hash, n, "tower"));
     const results: Address[][] = await Promise.all(promises);
     const candidates: Address[] = Array.from(new Set(results.flat()));
 
     // Map each peer to the hashes they need to fetch
-    const wideNetPromises: Promise<string[]>[] = candidates
+    const wideNetPromises: Promise<Fragment[]>[] = candidates
       .map((addr: Address) => this.getRemoteFragments(addr, hashes))
-      .map((prom: Promise<string[]>) => this.getWithTimeout(prom, HandshakeProto.HEAVY_CALLBACK_TIMEOUT));
+      .map((prom: Promise<Fragment[]>) => this.getWithTimeout(prom, HandshakeProto.HEAVY_CALLBACK_TIMEOUT));
 
     // Flatten the results and filter out any undefined values
-    return Promise.all(wideNetPromises).then((res: string[][]) => {
-      const fragments: string[] = res.flat().filter((frag): frag is string => typeof frag === "string");
+    return Promise.all(wideNetPromises).then((res: Fragment[][]) => {
+      const fragments: Fragment[] = res.flat().filter(isFragment);
       return fragments;
     });
   }
@@ -272,8 +284,9 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     detail,
   }: CustomEvent<Parcel<GetMetadataRequest>>): Promise<GetMetadataResponse> {
     assert(this.verifyStamp(detail.batch.payload), "Invalid stamp");
-    const address: Set<Base64> | null = this.metadataCache.get(detail.batch.payload.hashKey) ?? null;
-    return { metadata: [...(address || [])], type: SwarmTypes.GetMetadataResponse };
+
+    const addresses: Base64[] = this.getLocalMetadata(detail.batch.payload.hashKey) ?? null;
+    return { metadata: [...(addresses || [])], type: SwarmTypes.GetMetadataResponse };
   }
 
   private onSetFragmentsRequest({ detail }: CustomEvent<Parcel<SetFragmentsRequest>>): void {
@@ -285,7 +298,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     detail,
   }: CustomEvent<Parcel<GetFragmentsRequest>>): Promise<GetFragmentsResponse> {
     assert(this.verifyStamp(detail.batch.payload), "Invalid stamp");
-    const fragments: string[] = await this.getLocalFragments(detail.batch.payload.hashes);
+
+    const fragments: Fragment[] = await this.getLocalFragments(detail.batch.payload.hashes);
     return { fragments, type: SwarmTypes.GetFragmentsResponse };
   }
 

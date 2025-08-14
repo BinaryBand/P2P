@@ -11,7 +11,7 @@ export function blake2b(input: Uint8Array, key?: Uint8Array | string): Uint8Arra
   return hash;
 }
 
-const hashCache = new LRUCache<string, Uint8Array>({ max: 2048 });
+const hashCache = new LRUCache<string, Uint8Array>({ max: 256 });
 
 export function blake3(input: string, key?: Uint8Array): Uint8Array {
   if (key !== undefined) {

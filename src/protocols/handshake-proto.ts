@@ -132,7 +132,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
 
       this.addPeer(peerId, response.data.role);
     } catch (err: unknown) {
-      BaseProto.handleError(err, "requestPulse");
+      this.handleLog("warn", err, "requestPulse");
       this.peersCache.delete(encodePeerId(peerId));
     }
   }
@@ -161,7 +161,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
 
       return response.data.peers;
     } catch (err: unknown) {
-      BaseProto.handleError(err, "getNearestRemotePeers");
+      this.handleLog("error", err, "getNearestRemotePeers");
       return [];
     }
   }
@@ -224,7 +224,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
 
       this.addPeer(detail.peerId, response.data.role);
     } catch (err: unknown) {
-      BaseProto.handleError(err, "initiateHandshake");
+      this.handleLog("warn", err, "initiateHandshake");
     }
   }
 

@@ -5,10 +5,9 @@ import { fileURLToPath } from "url";
 import { isBase64 } from "../tools/typing.js";
 import SwarmProto from "../protocols/swarm-proto.js";
 
-const __filename: string = fileURLToPath(import.meta.url);
-const __dirname: string = dirname(__filename);
-const projectRoot: string = join(__dirname, "..");
-const dbFilePath: string = join(projectRoot, "database.db");
+import winston from "winston";
+
+const dbFilePath: string = join(new winston.transports.File({ dirname: "storage" }).dirname, "database.db");
 
 const db: Database = new sqlite3.Database(dbFilePath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE);
 db.configure("busyTimeout", 5000);
@@ -80,7 +79,7 @@ export function getMetadataDb(hashKey: Base64): Promise<Base64[]> {
   });
 }
 
-export function setFragmentsDb(fragments: string[], timestamp: number = Date.now()): Promise<void> {
+export function setFragmentsDb(fragments: Fragment[], timestamp: number = Date.now()): Promise<void> {
   return new Promise((resolve, reject) => {
     db.serialize(() => {
       db.run("BEGIN TRANSACTION", async (err: unknown) => {
@@ -93,7 +92,7 @@ export function setFragmentsDb(fragments: string[], timestamp: number = Date.now
 
         // Only add unique key, value pairs
         const insertPromises: Promise<void>[] = fragments.map(
-          (frag: string) =>
+          (frag: Fragment) =>
             new Promise<void>((res) => {
               const hashKey: Base64 = SwarmProto.hashFromData(frag);
               checkStmt.get([hashKey], (err, row?: { count: number }) => {
@@ -119,7 +118,7 @@ export function setFragmentsDb(fragments: string[], timestamp: number = Date.now
   });
 }
 
-export function getDataFragmentsDb(hashKeys: Base64[]): Promise<string[]> {
+export function getDataFragmentsDb(hashKeys: Base64[]): Promise<Fragment[]> {
   return new Promise((resolve, reject) => {
     const placeholders: string = hashKeys.map(() => "?").join(",");
     const query: string = `SELECT * FROM DataFragment WHERE hashKey IN (${placeholders})`;
@@ -127,7 +126,7 @@ export function getDataFragmentsDb(hashKeys: Base64[]): Promise<string[]> {
     db.all(query, hashKeys, (err: unknown, rows?: DataFragment[]) => {
       if (err) return reject(err);
 
-      const fragments: string[] =
+      const fragments: Fragment[] =
         rows?.filter(({ hashKey, data }) => SwarmProto.verifyDataFragment(hashKey, data)).map(({ data }) => data) ?? [];
 
       resolve(fragments);

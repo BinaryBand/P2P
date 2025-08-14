@@ -2,7 +2,7 @@ import { base64ToBytes, isAddress, isBase64 } from "./typing.js";
 import { blake3 } from "./cryptography.js";
 import { assert } from "./utils.js";
 
-import MinHeap from "heap-js";
+import { Heap } from "heap-js";
 
 function countSetBits(num: number): number {
   let count: number = 0;
@@ -65,19 +65,6 @@ export function calculateDistance(a: AgnosticEncoding, b: AgnosticEncoding): num
   return _calculateDistance_bytes(a as Uint8Array, b as Uint8Array);
 }
 
-function getTopNPeers(peers: PeerDistancePair[], n: number): PeerDistancePair[] {
-  const minHeap = new MinHeap<PeerDistancePair>((a, b) => a.distance - b.distance);
-
-  for (const peer of peers) {
-    minHeap.push(peer);
-    if (minHeap.size() > n) {
-      minHeap.pop(); // Remove the smallest element
-    }
-  }
-
-  return minHeap.toArray();
-}
-
 /**
  * Orders a list of peer identifiers by their calculated distance to a query string.
  *
@@ -92,7 +79,7 @@ function getTopNPeers(peers: PeerDistancePair[], n: number): PeerDistancePair[] 
  */
 export function orderPeers(query: Base64, candidates: Address[], n: number): PeerDistancePair[] {
   const key: Uint8Array = blake3(query);
-  const minHeap = new MinHeap<PeerDistancePair>((a, b) => a.distance - b.distance);
+  const minHeap = new Heap<PeerDistancePair>((a, b) => a.distance - b.distance);
 
   for (const address of candidates) {
     const peerCode: Uint8Array = blake3(address);

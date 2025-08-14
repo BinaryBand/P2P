@@ -21,6 +21,7 @@ import MessageProto, { MessageEvents } from "./protocols/message-proto.js";
 import { encodePeerId, isAddress } from "./tools/typing.js";
 import { blake3 } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
+import BaseProto from "./protocols/base-proto.js";
 
 const bootstrapNodes: string[] = [
   "/ip4/104.131.131.82/tcp/4001/ipfs/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
@@ -103,7 +104,6 @@ async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void
 async function sendMessage(client: ClientNode, recipient: PeerId, messages: string[]): Promise<void> {
   assert(client.services.proto, "Message service not initialized");
   assert(isAddress(encodePeerId(recipient)), "Invalid recipient address");
-  assert((await client.services.proto.getNeighbors()).length !== 0, "Recipient not connected");
 
   console.log("Sending message to:", recipient);
   await client.services.proto.sendMessages(recipient, messages);
@@ -184,8 +184,7 @@ async function main(): Promise<void> {
           break;
       }
     } catch (err: unknown) {
-      const errorMessage: string = err instanceof Error ? err.message : "An unknown error occurred";
-      console.error("Error:", errorMessage, "\n");
+      console.warn("An error occurred on main:", err);
     }
   }
 
@@ -193,8 +192,8 @@ async function main(): Promise<void> {
 }
 
 main()
-  .catch((error) => {
-    console.error("An error occurred:", error);
+  .catch((err) => {
+    console.error("An irrecoverable error occurred:", err);
     process.exit(1);
   })
   .finally(async () => {

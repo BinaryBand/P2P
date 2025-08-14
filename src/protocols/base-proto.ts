@@ -6,8 +6,19 @@ import { Uint8ArrayList } from "uint8arraylist";
 import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
-import { isParcel, isReturn, isRequest, decodeAddress, encodePeerId, decode, encode } from "../tools/typing.js";
+import {
+  isParcel,
+  isReturn,
+  isRequest,
+  decodeAddress,
+  encodePeerId,
+  decode,
+  encode,
+  bytesToBase64,
+} from "../tools/typing.js";
+import { getLogger, Logger } from "../helpers/logger.js";
 import { assert } from "../tools/utils.js";
+import { blake3 } from "../tools/cryptography.js";
 
 export enum BaseTypes {
   Return = "base:return",
@@ -19,6 +30,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
 
   private static readonly BATCH_TIMEOUT: number = 250; // send batch if no new parcels arrive within a quarter of a second
   private static readonly CONNECTION_CACHE_TIMEOUT: number = 30_000; // 30 seconds until connection request expires
+  private static readonly REQUEST_CACHE_TIMEOUT = 2_500;
   private static readonly CALLBACK_TIMEOUT: number = 10_000; // 10 seconds until callback request expires
   protected static readonly HEAVY_CALLBACK_TIMEOUT: number = 5_000; // 5 second timeout for heavy operations
 
@@ -33,24 +45,39 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   protected get address(): Address {
     return encodePeerId(this.peerId);
   }
+  protected readonly logger: Logger;
 
   private batches = new Map<Address, Set<Parcel<Payload>>>();
   private batchTimers = new Map<Address, NodeJS.Timeout>();
   private callbackMap = new Map<Uuid, Callback>();
 
   private connectionCache = new LRUCache<PeerId, Connection>({ max: 256, ttl: BaseProto.CONNECTION_CACHE_TIMEOUT });
+  private requestCache = new LRUCache<Base64, Promise<Acceptance<ResData>>>({
+    max: 256,
+    ttl: BaseProto.REQUEST_CACHE_TIMEOUT,
+  });
 
   constructor(components: Components) {
     super();
     this.peerId = components.peerId;
     this.sk = components.privateKey.raw.subarray(0, 32);
+    this.logger = getLogger(this.address);
     this.connectionManager = components.connectionManager;
     this.registrar = components.registrar;
   }
 
-  protected static handleError(err: unknown, context: string): void {
-    const message: unknown = err instanceof Error ? err.message : err;
-    console.error(`Error ${context}:`, message);
+  public handleLog(level: "error" | "warn" | "info", message: unknown, context: string): void {
+    switch (level) {
+      case "error":
+        this.logger.error(`Error ${context}:`, message);
+        break;
+      case "warn":
+        this.logger.warn(`Warning ${context}:`, message);
+        break;
+      case "info":
+        this.logger.info(`Info ${context}:`, message);
+        break;
+    }
   }
 
   protected async getWithTimeout<T>(promise: Promise<T>, delay: number): Promise<T> {
@@ -117,7 +144,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
       const parcelsBuffer: Uint8Array = encode(parcelsString);
       await pipe([parcelsBuffer], outgoing);
     } catch (err: unknown) {
-      BaseProto.handleError(err, "sendBatch");
+      const message: string = err instanceof Error ? err.message : String(err);
+      this.handleLog("error", message, "sendBatch");
     } finally {
       outgoing.close();
     }
@@ -156,6 +184,12 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     peerId: PeerId,
     payload: T
   ): Promise<Acceptance<U>> {
+    const fingerprintBuffer: Uint8Array = blake3(JSON.stringify(payload));
+    const fingerprint: Base64 = bytesToBase64(fingerprintBuffer);
+    if (this.requestCache.has(fingerprint)) {
+      return (await this.requestCache.get(fingerprint)!) as Acceptance<U>;
+    }
+
     const callbackId: Uuid = crypto.randomUUID();
     const receiver: Address = encodePeerId(peerId);
 
@@ -163,6 +197,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     const result: Return<U> = await this.sendParcel<T, U>(parcel);
     assert(result.success, (result as Rejection).message);
 
+    this.requestCache.set(fingerprint, Promise.resolve(result));
     return result;
   }
 
@@ -183,6 +218,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     const sender: Address = encodePeerId(connection.remotePeer);
     try {
       const parcels: Parcel<Payload>[] = BaseProto.parseIncoming(rawMessage);
+      this.logger.info("onIncomingStream", parcels);
+
       for (const detail of parcels) {
         assert(sender === detail.sender, `${sender} !== ${detail.sender}`);
 
@@ -197,7 +234,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
         }
       }
     } catch (err: unknown) {
-      BaseProto.handleError(err, "onIncomingStream");
+      this.handleLog("error", err, "onIncomingStream");
     }
   }
 
@@ -211,6 +248,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
       try {
         const data: ResData = (await args(event)) ?? { type: BaseTypes.EmptyResponse };
         payload = { success: true, data };
+        this.logger.info("callback (eventWrapper)", payload);
       } catch (err: unknown) {
         const errorMessage: string = err instanceof Error ? err.message : String(err);
         payload = { success: false, message: errorMessage };

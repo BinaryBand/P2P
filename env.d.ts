@@ -1,5 +1,7 @@
 type Address = import("./src/tools/typing").Address;
 type Base64 = import("./src/tools/typing").Base64;
+type Fragment = import("./src/tools/typing").Fragment;
+
 type Uuid = `${string}-${string}-${string}-${string}-${string}`;
 
 interface Acceptance<T extends ResData> {
@@ -71,7 +73,7 @@ interface GetMetadataRequest {
 }
 
 interface SetFragmentsRequest {
-  fragments: string[];
+  fragments: Fragment[];
   stamp: Base64;
   type: import("./src/protocols/swarm-proto").SwarmTypes.SetFragmentsRequest;
 }
@@ -104,7 +106,7 @@ interface GetMetadataResponse {
 }
 
 interface GetFragmentsResponse {
-  fragments: string[];
+  fragments: Fragment[];
   type: import("./src/protocols/swarm-proto").SwarmTypes.GetFragmentsResponse;
 }
 
@@ -143,7 +145,7 @@ interface Metadata {
 
 interface DataFragment {
   hashKey: Base64;
-  data: string;
+  data: Fragment;
   timestamp: number;
 }
 

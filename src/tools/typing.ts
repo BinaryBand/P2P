@@ -8,11 +8,12 @@ import { SwarmTypes } from "../protocols/swarm-proto.js";
 
 export type Address = `${Formats.Base58},${string}`;
 export type Base64 = `${Formats.Base64},${string}`;
+export type Fragment = `${Formats.Utf8},${string}`;
 
 export enum Formats {
   Base58 = "base58",
   Base64 = "base64",
-  UTF = "utf-8",
+  Utf8 = "utf8",
 }
 
 export const decode = TextDecoder.prototype.decode.bind(new TextDecoder());
@@ -28,6 +29,11 @@ export const isBase64 = (s: unknown): s is Base64 => typeof s === "string" && BA
 export const base64ToBytes = (b64: Base64): Uint8Array =>
   Uint8Array.from(Buffer.from(BASE64_REGEX.exec(b64)![1], Formats.Base64));
 export const bytesToBase64 = (b: Uint8Array): Base64 => `${Formats.Base64},${Buffer.from(b).toString(Formats.Base64)}`;
+
+const FRAGMENT_REGEX: RegExp = new RegExp(`^${Formats.Utf8},(.*)$`);
+export const isFragment = (frag: unknown): frag is Fragment => typeof frag === "string" && FRAGMENT_REGEX.test(frag);
+export const encodeFragment = (msg: MessageFragment): Fragment => `${Formats.Utf8},${JSON.stringify(msg)}`;
+export const decodeFragment = (frag: Fragment): MessageFragment => JSON.parse(FRAGMENT_REGEX.exec(frag)![1]);
 
 const UUID_REGEX: RegExp = new RegExp("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
 export const isUuid = (uuid: unknown): uuid is Uuid => typeof uuid === "string" && UUID_REGEX.test(uuid);
@@ -139,7 +145,7 @@ export function isRequest(request: unknown): request is ReqData {
       }
       break;
     case SwarmTypes.SetFragmentsRequest:
-      if ("fragments" in request && Array.isArray(request.fragments)) {
+      if ("fragments" in request && Array.isArray(request.fragments) && request.fragments.every(isFragment)) {
         _control = { fragments: request.fragments, stamp, type: request.type };
         return true;
       }
@@ -225,11 +231,7 @@ function isResponse(response: unknown): response is ResData {
       }
       break;
     case SwarmTypes.GetFragmentsResponse:
-      if (
-        "fragments" in response &&
-        Array.isArray(response.fragments) &&
-        response.fragments.every((frag) => typeof frag === "string")
-      ) {
+      if ("fragments" in response && Array.isArray(response.fragments) && response.fragments.every(isFragment)) {
         _control = { fragments: response.fragments, type: response.type };
         return true;
       }

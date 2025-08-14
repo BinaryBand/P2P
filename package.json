@@ -32,6 +32,7 @@
     "lru-cache": "^11.1.0",
     "shamir-secret-sharing": "^0.0.4",
     "speakeasy": "^2.0.0",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "winston": "^3.17.0"
   }
 }

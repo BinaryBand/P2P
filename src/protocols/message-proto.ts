@@ -1,11 +1,10 @@
 import { Components } from "libp2p/dist/src/components";
 import { PeerId } from "@libp2p/interface";
 
+import { decodeFragment, encodeFragment, encodePeerId, isMessage, isMessageFragment } from "../tools/typing.js";
 import { reconstructShamirSecret, shamirSecretSharing } from "../tools/cryptography.js";
-import { encodePeerId, isMessageFragment } from "../tools/typing.js";
 import SwarmProto, { SwarmEvents } from "./swarm-proto.js";
 import { assert } from "../tools/utils.js";
-import BaseProto from "./base-proto.js";
 
 export interface MessageEvents extends SwarmEvents {}
 
@@ -34,32 +33,27 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     const messageFragments: MessageFragment[] = fragments.map((content: Base64) => ({ id, content }));
     assert(messageFragments.every(isMessageFragment), "All fragments must be valid MessageFragment");
 
-    const fragmentStrings: string[] = messageFragments.map((fragment: MessageFragment) => JSON.stringify(fragment));
+    const fragmentStrings: Fragment[] = messageFragments.map(encodeFragment);
     return this.storeFragments(fragmentStrings);
   }
 
   public async sendMessages(recipient: PeerId, messages: string[]): Promise<void> {
-    const hashes: Base64[][] = await Promise.all(Array.from(messages).map(this.uploadMessage.bind(this)));
+    this.logger.info("sendMessages", { recipient, messages });
 
+    const hashes: Base64[][] = await Promise.all(Array.from(messages).map(this.uploadMessage.bind(this)));
     const address: Address = encodePeerId(recipient);
     await this.storeMetadata(address, hashes.flat());
   }
 
-  private static tryParse<T>(rawString: string): T | undefined {
-    try {
-      const result: T = JSON.parse(rawString);
-      return result;
-    } catch (err: unknown) {
-      BaseProto.handleError(err, "tryParse");
-    }
-    return undefined;
-  }
+  public async getInbox(peerId: PeerId): Promise<Message[]> {
+    this.logger.info("getInbox", { peerId });
 
-  public async getInbox(peerId: PeerId): Promise<string[]> {
     const recipient: Address = encodePeerId(peerId);
     const hashes: Base64[] = await this.fetchMetadata(recipient);
-    const fragmentStrings: string[] = await this.fetchFragments(hashes);
-    const fragments: MessageFragment[] = fragmentStrings.map(MessageProto.tryParse).filter(isMessageFragment);
+
+    const fragments: MessageFragment[] = (await this.fetchFragments(hashes))
+      .map(decodeFragment)
+      .filter(isMessageFragment);
 
     const puzzlePieces = fragments.reduce((acc: Record<Uuid, Set<Base64>>, fragment: MessageFragment) => {
       if (!acc[fragment.id]) {
@@ -73,7 +67,7 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
       Object.values(puzzlePieces).map(async (contents) => reconstructShamirSecret(Array.from(contents)))
     );
 
-    return reconstructedMessages.filter((msg): msg is string => msg !== undefined);
+    return reconstructedMessages.filter(isMessage);
   }
 
   public async start(): Promise<void> {
