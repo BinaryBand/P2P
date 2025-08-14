@@ -3,10 +3,7 @@ import { Components } from "libp2p/dist/src/components";
 
 import { x25519 } from "@noble/curves/ed25519.js";
 import { Uint8ArrayList } from "uint8arraylist";
-
 import { LRUCache } from "lru-cache";
-// import QuickLRU from "quick-lru";
-
 import { pipe } from "it-pipe";
 
 import {
@@ -15,13 +12,14 @@ import {
   isRequest,
   decodeAddress,
   encodePeerId,
-  decode,
-  encode,
+  stringify,
+  toBuffer,
   bytesToBase64,
 } from "../tools/typing.js";
 import { getLogger, Logger } from "../helpers/logger.js";
 import { assert } from "../tools/utils.js";
-import { blake2b, blake3 } from "../tools/cryptography.js";
+
+import { blake3 } from "../tools/cryptography.js";
 
 export enum BaseTypes {
   Return = "base:return",
@@ -110,11 +108,11 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
 
     await pipe(stream, async (source: AsyncGenerator<Uint8ArrayList>) => {
       for await (const data of source) {
-        chunks.push(decode(data.subarray(), { stream: true }));
+        chunks.push(stringify(data.subarray(), { stream: true }));
       }
     });
 
-    chunks.push(decode()); // Flush any remaining data
+    chunks.push(stringify()); // Flush any remaining data
     return chunks.join("");
   }
 
@@ -140,7 +138,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
 
     try {
       const parcelsString: string = JSON.stringify(parcels);
-      const parcelsBuffer: Uint8Array = encode(parcelsString);
+      const parcelsBuffer: Uint8Array = toBuffer(parcelsString);
       await pipe([parcelsBuffer], outgoing);
     } catch (err: unknown) {
       const message: string = err instanceof Error ? err.message : String(err);
@@ -184,8 +182,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     payload: T
   ): Promise<Acceptance<U>> {
     const fingerprintString: string = JSON.stringify(payload);
-    const fingerprintBuffer: Uint8Array = encode(fingerprintString);
-    const fingerprintHash: Uint8Array = blake2b(fingerprintBuffer);
+    const fingerprintBuffer: Uint8Array = toBuffer(fingerprintString);
+    const fingerprintHash: Uint8Array = blake3(fingerprintBuffer);
     const fingerprint: Base64 = bytesToBase64(fingerprintHash);
     if (this.requestCache.has(fingerprint)) {
       return (await this.requestCache.get(fingerprint)!) as Acceptance<U>;

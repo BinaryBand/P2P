@@ -1,12 +1,12 @@
 import { IdentifyResult, Libp2pEvents, PeerId, TypedEventTarget } from "@libp2p/interface";
 import { Components } from "libp2p/dist/src/components";
 
-import { bytesToBase64, decodeAddress, encode, encodePeerId } from "../tools/typing.js";
+import { bytesToBase64, decodeAddress, toBuffer, encodePeerId, Role } from "../tools/typing.js";
 import { blake2b, blake3, totp } from "../tools/cryptography.js";
+import DistanceCache from "../helpers/distance-cache.js";
 import { orderPeers } from "../tools/routing.js";
 import { assert } from "../tools/utils.js";
 import BaseProto from "./base-proto.js";
-import DistanceCache from "../helpers/distance-cache.js";
 
 export interface HandshakeEvents extends ProtocolEvents {
   [HandshakeTypes.InitiationRequest]: CustomEvent<Parcel<InitiationRequest>>;
@@ -36,12 +36,12 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   constructor(
     components: Components,
     passphrase: string = HandshakeProto.DEFAULT_PASSPHRASE,
-    private readonly role: Role = "phone"
+    private readonly role: Role = Role.Phone
   ) {
     super(components);
     this.events = components.events;
 
-    const buffer: Uint8Array = encode(passphrase);
+    const buffer: Uint8Array = toBuffer(passphrase);
     const base64: Base64 = bytesToBase64(buffer);
     this.initiationToken = blake3(base64);
   }
@@ -50,7 +50,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     return (params: Components) => new HandshakeProto(params, passphrase);
   }
 
-  public static hashFromData(data: Encoding): Base64 {
+  public static hashFromData(data: Encoded): Base64 {
     const key: Uint8Array = blake3(data);
     return bytesToBase64(key);
   }
@@ -77,7 +77,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
    */
   protected stampRequest<T extends ReqData>(payload: Unstamped<T>): T {
     const data: string = JSON.stringify({ ...payload, stamp: undefined });
-    const buffer: Uint8Array = encode(data);
+    const buffer: Uint8Array = toBuffer(data);
 
     const otp: Uint8Array = totp(this.initiationToken);
     const sig: Uint8Array = blake2b(buffer, otp);
@@ -105,7 +105,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     }
 
     const data: string = JSON.stringify({ ...payload, stamp: undefined });
-    const buffer: Uint8Array = encode(data);
+    const buffer: Uint8Array = toBuffer(data);
 
     let otp: Uint8Array = totp(this.initiationToken, Date.now());
     let expectedSig: Uint8Array = blake2b(buffer, otp);
@@ -251,7 +251,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     const neighbors: Address[] = this.getNeighbors(HandshakeProto.NEIGHBORHOOD_SIZE);
     neighbors.forEach((neighbor: Address) => {
       const peerId: PeerId = decodeAddress(neighbor);
-      this.addPeer(peerId, "tower");
+      this.addPeer(peerId, Role.Tower);
     });
   }
 

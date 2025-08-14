@@ -1,27 +1,26 @@
 import { createLibp2p } from "libp2p";
 import { circuitRelayServer, circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { webRTC, webRTCDirect } from "@libp2p/webrtc";
-import { webSockets } from "@libp2p/websockets";
 import { Identify, identify } from "@libp2p/identify";
+import { webSockets } from "@libp2p/websockets";
 import { bootstrap } from "@libp2p/bootstrap";
 import { kadDHT } from "@libp2p/kad-dht";
 import { ping } from "@libp2p/ping";
 import { mdns } from "@libp2p/mdns";
 
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
-
 import { Libp2p, PeerId, PeerInfo, PrivateKey, Stream } from "@libp2p/interface";
 import { peerIdFromString } from "@libp2p/peer-id";
 import { keys } from "@libp2p/crypto";
 
+import { noise } from "@chainsafe/libp2p-noise";
+import { yamux } from "@chainsafe/libp2p-yamux";
+
 import inquirer from "inquirer";
 
 import MessageProto, { MessageEvents } from "./protocols/message-proto.js";
-import { encode, encodePeerId, isAddress } from "./tools/typing.js";
-import { blake2b, blake3 } from "./tools/cryptography.js";
+import { toBuffer, encodePeerId, isAddress } from "./tools/typing.js";
+import { blake3 } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
-import BaseProto from "./protocols/base-proto.js";
 
 const bootstrapNodes: string[] = [
   "/ip4/104.131.131.82/tcp/4001/ipfs/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
@@ -58,8 +57,8 @@ function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?:
 }
 
 async function getPrivateKeyFromSeed(password: string): Promise<PrivateKey> {
-  const passwordBuffer: Uint8Array = encode(password);
-  const seed: Uint8Array = blake2b(passwordBuffer);
+  const passwordBuffer: Uint8Array = toBuffer(password);
+  const seed: Uint8Array = blake3(passwordBuffer);
   return await keys.generateKeyPairFromSeed("Ed25519", seed);
 }
 

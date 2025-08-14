@@ -36,7 +36,7 @@ function _calculateDistance_bytes(a: Uint8Array, b: Uint8Array): number {
   return distance;
 }
 
-export function calculateDistance(a: Encoding, b: Encoding): number;
+export function calculateDistance(a: Encoded, b: Encoded): number;
 export function calculateDistance(a: Uint8Array, b: Uint8Array): number;
 export function calculateDistance(a: unknown, b: unknown): number {
   if (a instanceof Uint8Array) {

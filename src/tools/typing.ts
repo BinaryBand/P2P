@@ -16,8 +16,13 @@ export enum Formats {
   Utf8 = "utf8",
 }
 
-export const decode = TextDecoder.prototype.decode.bind(new TextDecoder());
-export const encode = TextEncoder.prototype.encode.bind(new TextEncoder());
+export enum Role {
+  Phone = "phone",
+  Tower = "tower",
+}
+
+export const stringify = TextDecoder.prototype.decode.bind(new TextDecoder());
+export const toBuffer = TextEncoder.prototype.encode.bind(new TextEncoder());
 
 const ADDRESS_REGEX: RegExp = new RegExp(`^${Formats.Base58},([1-9A-HJ-NP-Za-km-z]+)$`);
 export const isAddress = (pId: unknown): pId is Address => typeof pId === "string" && ADDRESS_REGEX.test(pId);

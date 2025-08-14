@@ -6,7 +6,7 @@ type DistancePair<T> = {
   distance: number;
 };
 
-export default class DistanceCache<T extends Encoding, U> {
+export default class DistanceCache<T extends Encoded, U> {
   private addressMap: Map<T, U> = new Map();
   private neighbors = new Heap<DistancePair<T>>((a, b) => a.distance - b.distance); // Nearest neighbors
 

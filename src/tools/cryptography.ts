@@ -1,24 +1,22 @@
 import { blake2b as _blake2b } from "@noble/hashes/blake2.js";
 import { blake3 as _blake3 } from "@noble/hashes/blake3.js";
 import { combine, split } from "shamir-secret-sharing";
-
 import { LRUCache } from "lru-cache";
-// import QuickLRU from "quick-lru";
-
 import speakeasy from "speakeasy";
 
-import { base64ToBytes, bytesToBase64, decode, encode, Formats } from "./typing.js";
+import { base64ToBytes, bytesToBase64, stringify, toBuffer, Formats } from "./typing.js";
 
-const hashCache = new LRUCache<Encoding, Uint8Array>({ max: 256 });
+const hashCache = new LRUCache<string, Uint8Array>({ max: 256 });
 
 export function blake2b(input: Uint8Array, key?: Uint8Array): Uint8Array {
-  const hash: Uint8Array = _blake2b(input, { dkLen: 32, key });
-  return hash;
+  return _blake2b(input, { dkLen: 32, key });
 }
 
-export function blake3(input: Encoding, key?: Uint8Array): Uint8Array {
-  if (key !== undefined) {
-    input += bytesToBase64(key);
+export function blake3(input: Encoded, key?: Uint8Array): Uint8Array;
+export function blake3(input: Uint8Array, key?: Uint8Array): Uint8Array;
+export function blake3(input: Encoded | Uint8Array, key?: Uint8Array): Uint8Array {
+  if (input instanceof Uint8Array) {
+    return _blake3(input, { dkLen: 32, key });
   }
 
   let hash: Uint8Array | undefined = hashCache.get(input);
@@ -38,7 +36,7 @@ export function totp(secret: Uint8Array, targetTime?: number): Uint8Array {
 }
 
 export async function shamirSecretSharing(message: string, shares: number, threshold: number): Promise<Base64[]> {
-  const messageBuffer: Uint8Array = encode(JSON.stringify(message));
+  const messageBuffer: Uint8Array = toBuffer(JSON.stringify(message));
   const fragments: Uint8Array[] = await split(messageBuffer, shares, threshold);
   return fragments.map(bytesToBase64);
 }
@@ -46,6 +44,5 @@ export async function shamirSecretSharing(message: string, shares: number, thres
 export async function reconstructShamirSecret(shares: Base64[]): Promise<string | undefined> {
   const fragments: Uint8Array[] = shares.map(base64ToBytes);
   const secret: Uint8Array = await combine(fragments);
-  const rawString: string = decode(secret);
-  return rawString;
+  return stringify(secret);
 }

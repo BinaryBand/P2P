@@ -1,7 +1,7 @@
 type Address = import("./src/tools/typing").Address;
 type Base64 = import("./src/tools/typing").Base64;
 type Fragment = import("./src/tools/typing").Fragment;
-type Encoding = Address | Base64 | Fragment;
+type Encoded = Address | Base64 | Fragment;
 
 type Uuid = `${string}-${string}-${string}-${string}-${string}`;
 
@@ -24,7 +24,7 @@ type AsyncIsh<T, U> = (evt: T) => void | U | Promise<void | U>;
 
 /* Peer */
 
-type Role = "phone" | "tower";
+type Role = import("./src/tools/typing").Role;
 
 interface PeerInfo {
   peerId: import("@libp2p/interface").PeerId;

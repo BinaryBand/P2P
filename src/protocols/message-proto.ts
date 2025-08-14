@@ -49,9 +49,9 @@ export default class MessageProto<T extends MessageEvents> extends SwarmProto<T>
     this.logger.info("getInbox", { peerId });
 
     const recipient: Address = encodePeerId(peerId);
-    const hashes: Base64[] = await this.fetchMetadata(recipient);
+    const metadata: Base64[] = await this.fetchMetadata(recipient);
 
-    const fragments: MessageFragment[] = (await this.fetchFragments(hashes))
+    const fragments: MessageFragment[] = (await this.fetchFragments(metadata))
       .map(decodeFragment)
       .filter(isMessageFragment);
 

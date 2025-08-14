@@ -7,7 +7,7 @@ import { LRUCache } from "lru-cache";
 import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
 
 import { setMetadataDb, getMetadataDb, setFragmentsDb, getDataFragmentsDb } from "../helpers/database.js";
-import { bytesToBase64, decodeAddress, isFragment } from "../tools/typing.js";
+import { bytesToBase64, decodeAddress, isFragment, Role } from "../tools/typing.js";
 import { calculateDistance, orderPeers } from "../tools/routing.js";
 import { blake3 } from "../tools/cryptography.js";
 import { assert } from "../tools/utils.js";
@@ -39,7 +39,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   private metadataCache = new LRUCache<Base64, Set<Base64>>({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
   private storageCache = new LRUCache<Base64, DataFragment>({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
 
-  constructor(components: Components, passphrase?: string, role: Role = "tower") {
+  constructor(components: Components, passphrase?: string, role: Role = Role.Tower) {
     super(components, passphrase, role);
   }
 
@@ -82,18 +82,17 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     }
   }
 
-  private getLocalMetadata(hashKey: Base64): Base64[] {
+  private async getLocalMetadata(hashKey: Base64): Promise<Base64[]> {
     let cacheSet: Set<Base64> | undefined = this.metadataCache.get(hashKey);
     if (cacheSet === undefined) {
       cacheSet = new Set();
-      this.metadataCache.set(hashKey, cacheSet);
     }
 
     // Populate cache from local db
-    getMetadataDb(hashKey).then((rows: Base64[]) => {
-      rows.forEach((row: Base64) => cacheSet.add(row));
-    });
+    const rows: Base64[] = await getMetadataDb(hashKey);
+    rows.forEach((row: Base64) => cacheSet.add(row));
 
+    this.metadataCache.set(hashKey, cacheSet);
     return Array.from(cacheSet);
   }
 
@@ -126,7 +125,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   protected async storeMetadata(owner: Address, hashes: Base64[]): Promise<void> {
     this.logger.info("storeMetadata", { owner, hashes });
     const ownerHash: Base64 = bytesToBase64(blake3(owner));
-    const candidates: Address[] = await this.getNearestPeers(ownerHash, SwarmProto.SWARM_SIZE, "tower");
+    const candidates: Address[] = await this.getNearestPeers(ownerHash, SwarmProto.SWARM_SIZE, Role.Tower);
     candidates.map((addr: Address) => this.storeMetadataRemotely(addr, ownerHash, hashes));
   }
 
@@ -143,10 +142,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     this.logger.info("fetchMetadata", { owner });
     const ownerHash: Base64 = bytesToBase64(blake3(owner));
 
-    const candidates: Address[] = await this.getNearestPeers(ownerHash, SwarmProto.SWARM_SIZE, "tower");
-    const promises: Promise<Base64[]>[] = candidates.flatMap((addr: Address) =>
-      this.getRemoteMetadata(addr, ownerHash)
-    );
+    const candidates: Address[] = await this.getNearestPeers(ownerHash, SwarmProto.SWARM_SIZE, Role.Tower);
+    const promises: Promise<Base64[]>[] = candidates.flatMap((addr) => this.getRemoteMetadata(addr, ownerHash));
     const results: Base64[][] = await Promise.all(promises);
     const metadata: Base64[] = Array.from(new Set(results.flat()));
 
@@ -237,7 +234,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     this.logger.info("storeFragments", { fragments, n });
     const hashes: Base64[] = fragments.map(SwarmProto.hashFromData);
 
-    const promises: Promise<Address[]>[] = hashes.map((hash) => this.getNearestPeers(hash, n, "tower"));
+    const promises: Promise<Address[]>[] = hashes.map((hash) => this.getNearestPeers(hash, n, Role.Tower));
     const results: Address[][] = await Promise.all(promises);
     const candidates: Address[] = Array.from(new Set(results.flat()));
     candidates.forEach((addr: Address) => this.storeFragmentsRemotely(addr, fragments));
@@ -260,7 +257,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
     this.logger.info("fetchFragments", { hashes, n });
 
     // Find the nearest peers for each hash
-    const promises: Promise<Address[]>[] = hashes.map((hash) => this.getNearestPeers(hash, n, "tower"));
+    const promises: Promise<Address[]>[] = hashes.map((hash) => this.getNearestPeers(hash, n, Role.Tower));
     const results: Address[][] = await Promise.all(promises);
     const candidates: Address[] = Array.from(new Set(results.flat()));
 
@@ -286,7 +283,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }: CustomEvent<Parcel<GetMetadataRequest>>): Promise<GetMetadataResponse> {
     assert(this.verifyStamp(detail.batch.payload), "Invalid stamp");
 
-    const addresses: Base64[] = this.getLocalMetadata(detail.batch.payload.hashKey) ?? null;
+    const addresses: Base64[] = (await this.getLocalMetadata(detail.batch.payload.hashKey)) ?? null;
     return { metadata: [...(addresses || [])], type: SwarmTypes.GetMetadataResponse };
   }
 
