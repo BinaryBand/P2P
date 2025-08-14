@@ -18,8 +18,8 @@ import { keys } from "@libp2p/crypto";
 import inquirer from "inquirer";
 
 import MessageProto, { MessageEvents } from "./protocols/message-proto.js";
-import { encodePeerId, isAddress } from "./tools/typing.js";
-import { blake3 } from "./tools/cryptography.js";
+import { encode, encodePeerId, isAddress } from "./tools/typing.js";
+import { blake2b, blake3 } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 import BaseProto from "./protocols/base-proto.js";
 
@@ -58,7 +58,8 @@ function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?:
 }
 
 async function getPrivateKeyFromSeed(password: string): Promise<PrivateKey> {
-  const seed: Uint8Array = blake3(password);
+  const passwordBuffer: Uint8Array = encode(password);
+  const seed: Uint8Array = blake2b(passwordBuffer);
   return await keys.generateKeyPairFromSeed("Ed25519", seed);
 }
 
@@ -92,11 +93,11 @@ async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void
 
     await client.dial(bootstrapPeer.multiaddrs, { signal: abortController.signal });
     console.log("Connected to bootstrap peer:", bootstrapPeer.id);
-  } catch (error) {
+  } catch (err) {
     if (abortController.signal.aborted) {
       console.log("Bootstrapping was aborted.");
     } else {
-      console.error("Error during bootstrapping:", error);
+      console.error("Error during bootstrapping:", err);
     }
   }
 }
@@ -111,7 +112,6 @@ async function sendMessage(client: ClientNode, recipient: PeerId, messages: stri
 }
 
 var client: ClientNode;
-
 async function main(): Promise<void> {
   console.log("Starting application...");
 

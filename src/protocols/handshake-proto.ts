@@ -6,7 +6,7 @@ import { blake2b, blake3, totp } from "../tools/cryptography.js";
 import { orderPeers } from "../tools/routing.js";
 import { assert } from "../tools/utils.js";
 import BaseProto from "./base-proto.js";
-import DistanceCache from "../helpers/cache.js";
+import DistanceCache from "../helpers/distance-cache.js";
 
 export interface HandshakeEvents extends ProtocolEvents {
   [HandshakeTypes.InitiationRequest]: CustomEvent<Parcel<InitiationRequest>>;
@@ -31,7 +31,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
 
   private events: TypedEventTarget<Libp2pEvents>;
   private peerAuditTimer?: NodeJS.Timeout;
-  private peersCache: DistanceCache = new DistanceCache(this.address);
+  private peersCache = new DistanceCache<Address, PeerInfo>(this.address, HandshakeProto.NEIGHBORHOOD_SIZE);
 
   constructor(
     components: Components,
@@ -40,14 +40,17 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   ) {
     super(components);
     this.events = components.events;
-    this.initiationToken = blake3(passphrase);
+
+    const buffer: Uint8Array = encode(passphrase);
+    const base64: Base64 = bytesToBase64(buffer);
+    this.initiationToken = blake3(base64);
   }
 
   public static Handshake<T extends HandshakeEvents>(passphrase?: string): (params: Components) => HandshakeProto<T> {
     return (params: Components) => new HandshakeProto(params, passphrase);
   }
 
-  public static hashFromData(data: string): Base64 {
+  public static hashFromData(data: Encoding): Base64 {
     const key: Uint8Array = blake3(data);
     return bytesToBase64(key);
   }

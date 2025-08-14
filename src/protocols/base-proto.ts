@@ -3,7 +3,10 @@ import { Components } from "libp2p/dist/src/components";
 
 import { x25519 } from "@noble/curves/ed25519.js";
 import { Uint8ArrayList } from "uint8arraylist";
+
 import { LRUCache } from "lru-cache";
+// import QuickLRU from "quick-lru";
+
 import { pipe } from "it-pipe";
 
 import {
@@ -18,7 +21,7 @@ import {
 } from "../tools/typing.js";
 import { getLogger, Logger } from "../helpers/logger.js";
 import { assert } from "../tools/utils.js";
-import { blake3 } from "../tools/cryptography.js";
+import { blake2b, blake3 } from "../tools/cryptography.js";
 
 export enum BaseTypes {
   Return = "base:return",
@@ -29,8 +32,6 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   public static readonly PROTOCOL: string = "/secret-handshake/proto/0.7.1";
 
   private static readonly BATCH_TIMEOUT: number = 250; // send batch if no new parcels arrive within a quarter of a second
-  private static readonly CONNECTION_CACHE_TIMEOUT: number = 30_000; // 30 seconds until connection request expires
-  private static readonly REQUEST_CACHE_TIMEOUT = 2_500;
   private static readonly CALLBACK_TIMEOUT: number = 10_000; // 10 seconds until callback request expires
   protected static readonly HEAVY_CALLBACK_TIMEOUT: number = 5_000; // 5 second timeout for heavy operations
 
@@ -51,11 +52,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   private batchTimers = new Map<Address, NodeJS.Timeout>();
   private callbackMap = new Map<Uuid, Callback>();
 
-  private connectionCache = new LRUCache<PeerId, Connection>({ max: 256, ttl: BaseProto.CONNECTION_CACHE_TIMEOUT });
-  private requestCache = new LRUCache<Base64, Promise<Acceptance<ResData>>>({
-    max: 256,
-    ttl: BaseProto.REQUEST_CACHE_TIMEOUT,
-  });
+  private connectionCache = new LRUCache<PeerId, Connection>({ max: 256 });
+  private requestCache = new LRUCache<Base64, Promise<Acceptance<ResData>>>({ max: 256 });
 
   constructor(components: Components) {
     super();
@@ -98,6 +96,7 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   private async getConnection(peerId: PeerId): Promise<Connection> {
     const existingConnection: Connection | undefined = this.connectionCache.get(peerId);
     if (existingConnection?.status === "open" && existingConnection?.direction === "outbound") {
+      this.connectionCache.set(peerId, existingConnection);
       return existingConnection;
     }
 
@@ -184,8 +183,10 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     peerId: PeerId,
     payload: T
   ): Promise<Acceptance<U>> {
-    const fingerprintBuffer: Uint8Array = blake3(JSON.stringify(payload));
-    const fingerprint: Base64 = bytesToBase64(fingerprintBuffer);
+    const fingerprintString: string = JSON.stringify(payload);
+    const fingerprintBuffer: Uint8Array = encode(fingerprintString);
+    const fingerprintHash: Uint8Array = blake2b(fingerprintBuffer);
+    const fingerprint: Base64 = bytesToBase64(fingerprintHash);
     if (this.requestCache.has(fingerprint)) {
       return (await this.requestCache.get(fingerprint)!) as Acceptance<U>;
     }

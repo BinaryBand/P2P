@@ -1,19 +1,22 @@
 import { blake2b as _blake2b } from "@noble/hashes/blake2.js";
 import { blake3 as _blake3 } from "@noble/hashes/blake3.js";
 import { combine, split } from "shamir-secret-sharing";
+
 import { LRUCache } from "lru-cache";
+// import QuickLRU from "quick-lru";
+
 import speakeasy from "speakeasy";
 
 import { base64ToBytes, bytesToBase64, decode, encode, Formats } from "./typing.js";
 
-export function blake2b(input: Uint8Array, key?: Uint8Array | string): Uint8Array {
+const hashCache = new LRUCache<Encoding, Uint8Array>({ max: 256 });
+
+export function blake2b(input: Uint8Array, key?: Uint8Array): Uint8Array {
   const hash: Uint8Array = _blake2b(input, { dkLen: 32, key });
   return hash;
 }
 
-const hashCache = new LRUCache<string, Uint8Array>({ max: 256 });
-
-export function blake3(input: string, key?: Uint8Array): Uint8Array {
+export function blake3(input: Encoding, key?: Uint8Array): Uint8Array {
   if (key !== undefined) {
     input += bytesToBase64(key);
   }

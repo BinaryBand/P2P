@@ -1,9 +1,10 @@
 import { Components } from "libp2p/dist/src/components";
 import { PeerId } from "@libp2p/interface";
+
 import { LRUCache } from "lru-cache";
+// import QuickLRU from "quick-lru";
 
 import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
-import BaseProto from "./base-proto.js";
 
 import { setMetadataDb, getMetadataDb, setFragmentsDb, getDataFragmentsDb } from "../helpers/database.js";
 import { bytesToBase64, decodeAddress, isFragment } from "../tools/typing.js";
@@ -35,8 +36,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   private static readonly LIGHT_AUDIT_INTERVAL: number = 60_000; // 1 minute
 
   private lightAuditTimer?: NodeJS.Timeout;
-  private metadataCache: LRUCache<Base64, Set<Base64>> = new LRUCache({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
-  private storageCache: LRUCache<Base64, DataFragment> = new LRUCache({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
+  private metadataCache = new LRUCache<Base64, Set<Base64>>({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
+  private storageCache = new LRUCache<Base64, DataFragment>({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
 
   constructor(components: Components, passphrase?: string, role: Role = "tower") {
     super(components, passphrase, role);

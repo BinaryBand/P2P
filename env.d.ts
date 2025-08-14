@@ -1,6 +1,7 @@
 type Address = import("./src/tools/typing").Address;
 type Base64 = import("./src/tools/typing").Base64;
 type Fragment = import("./src/tools/typing").Fragment;
+type Encoding = Address | Base64 | Fragment;
 
 type Uuid = `${string}-${string}-${string}-${string}-${string}`;
 

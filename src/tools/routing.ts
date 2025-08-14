@@ -1,4 +1,4 @@
-import { base64ToBytes, isAddress, isBase64 } from "./typing.js";
+import { base64ToBytes, isAddress, isBase64, isFragment } from "./typing.js";
 import { blake3 } from "./cryptography.js";
 import { assert } from "./utils.js";
 
@@ -13,18 +13,16 @@ function countSetBits(num: number): number {
   return count;
 }
 
-type AgnosticEncoding = Uint8Array | Base64 | Address;
+function _calculateDistance(a: Address | Fragment, b: Address | Fragment): number {
+  const aHash: Uint8Array = blake3(a);
+  const bHash: Uint8Array = blake3(b);
+  return _calculateDistance_bytes(aHash, bHash);
+}
 
 function _calculateDistance_base64(a: Base64, b: Base64): number {
   const aBytes: Uint8Array = base64ToBytes(a);
   const bBytes: Uint8Array = base64ToBytes(b);
   return _calculateDistance_bytes(aBytes, bBytes);
-}
-
-function _calculateDistance_Address(a: Address, b: Address): number {
-  const aHash: Uint8Array = blake3(a);
-  const bHash: Uint8Array = blake3(b);
-  return _calculateDistance_bytes(aHash, bHash);
 }
 
 function _calculateDistance_bytes(a: Uint8Array, b: Uint8Array): number {
@@ -38,31 +36,21 @@ function _calculateDistance_bytes(a: Uint8Array, b: Uint8Array): number {
   return distance;
 }
 
-/**
- * Calculates the distance between two values encoded in Base64.
- *
- * This function is typically used in distributed systems or networking contexts
- * where distances between node identifiers (represented as Base64 strings) are required,
- * such as in DHTs (Distributed Hash Tables) or routing algorithms.
- *
- * @param a - The first Base64-encoded value.
- * @param b - The second Base64-encoded value.
- * @returns The calculated distance as a number.
- */
-export function calculateDistance(a: Base64, b: Base64): number;
-export function calculateDistance(a: Address, b: Address): number;
+export function calculateDistance(a: Encoding, b: Encoding): number;
 export function calculateDistance(a: Uint8Array, b: Uint8Array): number;
-export function calculateDistance(a: AgnosticEncoding, b: AgnosticEncoding): number {
-  if (isBase64(a) && isBase64(b)) {
+export function calculateDistance(a: unknown, b: unknown): number {
+  if (a instanceof Uint8Array) {
+    assert(b instanceof Uint8Array, "Invalid types for distance calculation");
+    return _calculateDistance_bytes(a, b);
+  }
+
+  if (isBase64(a)) {
+    assert(isBase64(b), "Invalid types for distance calculation");
     return _calculateDistance_base64(a, b);
   }
 
-  if (isAddress(a) && isAddress(b)) {
-    return _calculateDistance_Address(a, b);
-  }
-
-  assert(a instanceof Uint8Array && b instanceof Uint8Array, "Invalid types for distance calculation");
-  return _calculateDistance_bytes(a as Uint8Array, b as Uint8Array);
+  assert((isAddress(a) && isAddress(b)) || (isFragment(a) && isFragment(b)), "Invalid types for distance calculation");
+  return _calculateDistance(a, b);
 }
 
 /**
