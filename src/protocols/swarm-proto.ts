@@ -49,12 +49,13 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private storeMetadataLocally(hashKey: Base64, metadata: Base64[]): void {
-    setMetadataDb(hashKey, metadata);
+    setMetadataDb(hashKey, metadata).catch((err: unknown) => this.handleLog("error", err, "storeMetadataLocally"));
 
     // Update cache
     let cacheSet: Set<Base64> | undefined = this.metadataCache.get(hashKey);
     if (cacheSet === undefined) {
-      cacheSet = new Set();
+      cacheSet = new Set<Base64>();
+      this.metadataCache.set(hashKey, cacheSet);
     }
     metadata.forEach((hash: Base64) => cacheSet.add(hash));
   }
@@ -79,7 +80,8 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   private async getLocalMetadata(hashKey: Base64): Promise<Base64[]> {
     let cacheSet: Set<Base64> | undefined = this.metadataCache.get(hashKey);
     if (cacheSet === undefined) {
-      cacheSet = new Set();
+      cacheSet = new Set<Base64>();
+      this.metadataCache.set(hashKey, cacheSet);
     }
 
     // Populate cache from local db
@@ -144,7 +146,7 @@ export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T>
   }
 
   private storeFragmentsLocally(fragments: Fragment[]): Base64[] {
-    setFragmentsDb(fragments);
+    setFragmentsDb(fragments).catch((err: unknown) => this.handleLog("error", err, "storeFragmentsLocally"));
 
     return fragments.map((frag) => {
       const hashKey: Base64 = SwarmProto.hashFromData(frag);

@@ -1,12 +1,13 @@
 import { createLibp2p } from "libp2p";
 import { circuitRelayServer, circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { webRTC, webRTCDirect } from "@libp2p/webrtc";
-import { Identify, identify } from "@libp2p/identify";
 import { webSockets } from "@libp2p/websockets";
 import { bootstrap } from "@libp2p/bootstrap";
 import { kadDHT } from "@libp2p/kad-dht";
-import { ping } from "@libp2p/ping";
 import { mdns } from "@libp2p/mdns";
+
+import { Identify, identify } from "@libp2p/identify";
+import { ping } from "@libp2p/ping";
 
 import { Libp2p, PeerId, PeerInfo, PrivateKey } from "@libp2p/interface";
 import { peerIdFromString } from "@libp2p/peer-id";
