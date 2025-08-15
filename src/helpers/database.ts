@@ -1,6 +1,6 @@
-import sqlite3, { Database, Statement } from "sqlite3";
 import SwarmProto from "../protocols/swarm-proto.js";
 
+import sqlite3, { Database, Statement } from "sqlite3";
 import path from "path";
 import fs from "fs";
 

@@ -72,9 +72,12 @@ export function orderPeers(query: Base64, candidates: Address[], n: number): Dis
   for (const address of candidates) {
     const peerCode: Uint8Array = genericHash(address);
     const distance: number = calculateDistance(key, peerCode);
-    minHeap.push({ value: address, distance });
-    if (minHeap.size() > n) {
-      minHeap.pop();
+
+    if (minHeap.size() < n || distance < (minHeap.peek()?.distance ?? Infinity)) {
+      minHeap.push({ value: address, distance });
+      if (minHeap.size() > n) {
+        minHeap.pop();
+      }
     }
   }
 

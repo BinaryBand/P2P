@@ -22,7 +22,7 @@ export enum HandshakeTypes {
   GetNeighborsResponse = "handshake:get-neighbors-response",
 }
 
-export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto<T> {
+export default class HandshakeProto<T extends HandshakeEvents = HandshakeEvents> extends BaseProto<T> {
   private readonly initiationToken: Uint8Array;
   private static readonly DEFAULT_PASSPHRASE: string = "reconcile-stranger-clash";
   private static readonly PEER_AUDIT_INTERVAL: number = 20_000; // 20 seconds
@@ -30,7 +30,7 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
   private static readonly NEIGHBORHOOD_SIZE: number = 10; // Nearest 10 peers
 
   private events: TypedEventTarget<Libp2pEvents>;
-  private peerAuditTimer?: NodeJS.Timeout;
+  // private peerAuditTimer?: NodeJS.Timeout;
   private peersCache = new DistanceCache<Address, PeerInfo>(this.address, HandshakeProto.NEIGHBORHOOD_SIZE);
 
   constructor(
@@ -218,6 +218,8 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
       return;
     }
 
+    this.handleLog("info", `Initiating handshake with peer: ${detail.peerId}`, "initiateHandshake");
+
     try {
       const address: Address = encodePeerId(detail.peerId);
 
@@ -247,14 +249,14 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     return { peers, type: HandshakeTypes.GetNeighborsResponse };
   }
 
-  // Periodically audits peers to ensure they are still reachable
-  private async auditPeers(): Promise<void> {
-    const neighbors: Address[] = this.getNeighbors(HandshakeProto.NEIGHBORHOOD_SIZE);
-    neighbors.forEach((neighbor: Address) => {
-      const peerId: PeerId = decodeAddress(neighbor);
-      this.addPeer(peerId, Role.Tower);
-    });
-  }
+  // // Periodically audits peers to ensure they are still reachable
+  // private async auditPeers(): Promise<void> {
+  //   const neighbors: Address[] = this.getNeighbors(HandshakeProto.NEIGHBORHOOD_SIZE);
+  //   neighbors.forEach((neighbor: Address) => {
+  //     const peerId: PeerId = decodeAddress(neighbor);
+  //     this.addPeer(peerId, Role.Tower);
+  //   });
+  // }
 
   public async start(): Promise<void> {
     await super.start();
@@ -265,8 +267,8 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     this.events.addEventListener("peer:identify", this.initiateHandshake.bind(this));
     this.events.addEventListener("peer:disconnect", this.peerDropped.bind(this));
 
-    const randomDelay: number = Math.random() * 1000;
-    this.peerAuditTimer = setInterval(this.auditPeers.bind(this), HandshakeProto.PEER_AUDIT_INTERVAL + randomDelay);
+    // const randomDelay: number = Math.random() * 1000;
+    // this.peerAuditTimer = setInterval(this.auditPeers.bind(this), HandshakeProto.PEER_AUDIT_INTERVAL + randomDelay);
   }
 
   public async stop(): Promise<void> {
@@ -278,9 +280,9 @@ export default class HandshakeProto<T extends HandshakeEvents> extends BaseProto
     this.events.removeEventListener("peer:identify", this.initiateHandshake.bind(this));
     this.events.removeEventListener("peer:disconnect", this.peerDropped.bind(this));
 
-    if (this.peerAuditTimer !== undefined) {
-      clearInterval(this.peerAuditTimer);
-      this.peerAuditTimer = undefined;
-    }
+    // if (this.peerAuditTimer !== undefined) {
+    //   clearInterval(this.peerAuditTimer);
+    //   this.peerAuditTimer = undefined;
+    // }
   }
 }

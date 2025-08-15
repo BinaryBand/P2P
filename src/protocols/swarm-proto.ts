@@ -27,7 +27,7 @@ export enum SwarmTypes {
   GetFragmentsResponse = "swarm:get-fragments-response",
 }
 
-export default class SwarmProto<T extends SwarmEvents> extends HandshakeProto<T> {
+export default class SwarmProto<T extends SwarmEvents = SwarmEvents> extends HandshakeProto<T> {
   private static readonly SWARM_SIZE: number = 3;
   private static readonly MAX_STORAGE_CACHE_SIZE: number = 2048;
   private static readonly LIGHT_AUDIT_INTERVAL: number = 60_000; // 1 minute

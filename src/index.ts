@@ -1,75 +1,19 @@
-import { createLibp2p } from "libp2p";
-import { circuitRelayServer, circuitRelayTransport } from "@libp2p/circuit-relay-v2";
-import { webRTC, webRTCDirect } from "@libp2p/webrtc";
-import { webSockets } from "@libp2p/websockets";
-import { bootstrap } from "@libp2p/bootstrap";
-import { kadDHT } from "@libp2p/kad-dht";
-import { mdns } from "@libp2p/mdns";
-
-import { Identify, identify } from "@libp2p/identify";
-import { ping } from "@libp2p/ping";
-
-import { Libp2p, PeerId, PeerInfo, PrivateKey } from "@libp2p/interface";
+import { PeerId, PeerInfo, PrivateKey } from "@libp2p/interface";
 import { peerIdFromString } from "@libp2p/peer-id";
-import { keys } from "@libp2p/crypto";
-
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
 
 import inquirer from "inquirer";
 
-import MessageProto, { MessageEvents } from "./protocols/message-proto.js";
-import { toBuffer, encodePeerId, isAddress } from "./tools/typing.js";
-import { genericHash, sodium } from "./tools/cryptography.js";
+import { getNewClient, getPrivateKeyFromSeed } from "./tools/client.js";
+import { encodePeerId, isAddress } from "./tools/typing.js";
+import { sodium } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
-
-const bootstrapNodes: string[] = [
-  "/ip4/104.131.131.82/tcp/4001/ipfs/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-  "/dnsaddr/bootstrap.libp2p.io/ipfs/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-  "/dnsaddr/bootstrap.libp2p.io/ipfs/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-  "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
-  "/dnsaddr/va1.bootstrap.libp2p.io/p2p/12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8",
-  "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-  "/ip4/104.131.131.82/udp/4001/quic-v1/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-  "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-  "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-  "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-];
-
-const stockOptions = {
-  connectionEncrypters: [noise()],
-  peerDiscovery: [mdns(), bootstrap({ list: bootstrapNodes })],
-  streamMuxers: [yamux()],
-  transports: [circuitRelayTransport(), webRTC(), webRTCDirect(), webSockets()],
-};
-
-function getClientOptions(addresses: string[], privateKey?: PrivateKey) {
-  return {
-    ...stockOptions,
-    addresses: { listen: [...addresses, "/p2p-circuit", "/webrtc"] },
-    privateKey,
-    services: { dht: kadDHT(), identify: identify(), ping: ping(), relay: circuitRelayServer() },
-  };
-}
-
-function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?: string) {
-  const options = getClientOptions(addresses, privateKey);
-  return createLibp2p({ ...options, services: { ...options.services, proto: MessageProto.Message(passphrase) } });
-}
-
-async function getPrivateKeyFromSeed(password: string): Promise<PrivateKey> {
-  const passwordBuffer: Uint8Array = toBuffer(password);
-  const seed: Uint8Array = genericHash(passwordBuffer);
-  return await keys.generateKeyPairFromSeed("Ed25519", seed);
-}
-
-type ClientNode = Libp2p<{ proto: MessageProto<MessageEvents>; identify: Identify }>;
+import BaseProto from "./protocols/base-proto.js";
 
 async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void> {
   assert(!client.peerId.equals(peerId), "Cannot bootstrap to self");
   assert(isAddress(encodePeerId(peerId)), "Invalid peer ID format");
 
-  console.log("Bootstrapping with peer:", peerId.toString());
+  console.log("Started bootstrapping with peer:", peerId.toString());
 
   // Set up inquirer to listen for a key press
   const abortController = new AbortController();
@@ -91,14 +35,11 @@ async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void
     const bootstrapPeer: PeerInfo = await client.peerRouting.findPeer(peerId, { signal: abortController.signal });
     console.log("Found bootstrap peer:", bootstrapPeer.id);
 
-    await client.dial(bootstrapPeer.multiaddrs, { signal: abortController.signal });
+    await client.dialProtocol(bootstrapPeer.multiaddrs, BaseProto.PROTOCOL, { signal: abortController.signal });
     console.log("Connected to bootstrap peer:", bootstrapPeer.id);
-  } catch (err) {
-    if (abortController.signal.aborted) {
-      console.log("Bootstrapping was aborted.");
-    } else {
-      console.error("Error during bootstrapping:", err);
-    }
+  } catch (err: unknown) {
+    client.services.proto.handleLog("error", err, "bootstrapping");
+    (await keyPressListener).abort();
   }
 }
 
@@ -162,7 +103,7 @@ async function main(): Promise<void> {
           await bootstrapClient(client, bootstrapPeerId);
           break;
         case "pool":
-          const pool: Address[] = await client.services.proto.getNeighbors();
+          const pool: Address[] = client.services.proto.getNeighbors();
           console.log("Connected peers:", pool);
           break;
         case "send":
@@ -185,19 +126,17 @@ async function main(): Promise<void> {
           break;
       }
     } catch (err: unknown) {
-      console.warn("An error occurred on main:", err);
+      client.services.proto.handleLog("error", err, "main");
     }
   }
-
-  process.exit(0);
 }
 
 main()
   .catch((err) => {
-    console.error("An irrecoverable error occurred:", err);
-    process.exit(1);
+    client.services.proto.handleLog("error", err, "main");
   })
   .finally(async () => {
     await client?.stop();
     console.log("Cleanup complete.");
+    process.exit(1);
   });

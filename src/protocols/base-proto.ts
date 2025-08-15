@@ -25,10 +25,10 @@ export enum BaseTypes {
   EmptyResponse = "base:empty-response",
 }
 
-export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitter<T> {
+export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extends TypedEventEmitter<T> {
   public static readonly PROTOCOL: string = "/secret-handshake/proto/0.7.1";
 
-  private static readonly BATCH_TIMEOUT: number = 250; // send batch if no new parcels arrive within a quarter of a second
+  // private static readonly BATCH_TIMEOUT: number = 250; // send batch if no new parcels arrive within a quarter of a second
   private static readonly CALLBACK_TIMEOUT: number = 10_000; // 10 seconds until callback request expires
   protected static readonly HEAVY_CALLBACK_TIMEOUT: number = 5_000; // 5 second timeout for heavy operations
 
@@ -56,7 +56,9 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     super();
     this.peerId = components.peerId;
     this.sk = components.privateKey.raw.subarray(0, 32);
+
     this.logger = getLogger(this.address);
+
     this.connectionManager = components.connectionManager;
     this.registrar = components.registrar;
   }
@@ -102,16 +104,22 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     return newConnection;
   }
 
-  private static async decodeStream(stream: Stream): Promise<string> {
+  private async decodeStream(stream: Stream): Promise<string> {
     const chunks: string[] = [];
 
-    await pipe(stream, async (source: AsyncGenerator<Uint8ArrayList>) => {
-      for await (const data of source) {
-        chunks.push(stringify(data.subarray(), { stream: true }));
-      }
-    });
+    try {
+      await pipe(stream, async (source: AsyncGenerator<Uint8ArrayList>) => {
+        for await (const data of source) {
+          chunks.push(stringify(data.subarray(), { stream: true }));
+        }
+      });
 
-    chunks.push(stringify()); // Flush any remaining data
+      chunks.push(stringify()); // Flush any remaining data
+    } catch (err: unknown) {
+      this.handleLog("error", err, "decodeStream");
+      throw new Error("Failed to decode stream");
+    }
+
     return chunks.join("");
   }
 
@@ -132,18 +140,21 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
 
   private async sendBatch<T extends Payload>(parcels: Parcel<T>[]): Promise<void> {
     const peerId: PeerId = decodeAddress(parcels[0].receiver);
-    const connection: Connection = await this.getConnection(peerId);
-    const outgoing: Stream = await connection.newStream(BaseProto.PROTOCOL);
+    let outgoing: Stream | undefined;
 
     try {
+      const connection: Connection = await this.getConnection(peerId);
+      outgoing = await connection.newStream(BaseProto.PROTOCOL);
+
       const parcelsString: string = JSON.stringify(parcels);
       const parcelsBuffer: Uint8Array = toBuffer(parcelsString);
       await pipe([parcelsBuffer], outgoing);
+
+      this.logger.info("sendBatch", { parcelsString });
     } catch (err: unknown) {
-      const message: string = err instanceof Error ? err.message : String(err);
-      this.handleLog("error", message, "sendBatch");
+      this.handleLog("error", err, "sendBatch");
     } finally {
-      outgoing.close();
+      outgoing?.close();
     }
   }
 
@@ -182,7 +193,6 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     receiver: Address,
     payload: T
   ): Promise<Acceptance<U>> {
-    payload.stamp;
     const fingerprint: Base64 = `${Formats.Base64},${sodium.crypto_generichash(32, payload.stamp, receiver, "base64")}`;
     if (this.requestCache.has(fingerprint)) {
       return this.requestCache.get(fingerprint)! as Promise<Acceptance<U>>;
@@ -197,24 +207,27 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
     return result;
   }
 
-  private static parseIncoming(rawMessage: string): Parcel<Payload>[] {
+  private parseIncoming(rawMessage: string): Parcel<Payload>[] {
     try {
       const parcel: unknown = JSON.parse(rawMessage);
       if (Array.isArray(parcel) && parcel.every(isParcel)) {
         return parcel;
       }
-    } catch {}
+      throw new Error("Invalid parcel format");
+    } catch (err: unknown) {
+      this.logger.error("Failed to parse incoming message", err);
+    }
     return [];
   }
 
   private async onIncomingStream({ connection, stream }: IncomingStreamData): Promise<void> {
-    const rawMessage: string = await BaseProto.decodeStream(stream);
+    const rawMessage: string = await this.decodeStream(stream);
     stream.close();
 
     const sender: Address = encodePeerId(connection.remotePeer);
     try {
-      const parcels: Parcel<Payload>[] = BaseProto.parseIncoming(rawMessage);
-      this.logger.info("onIncomingStream", parcels);
+      const parcels: Parcel<Payload>[] = this.parseIncoming(rawMessage);
+      this.logger.info("onIncomingStream", { rawMessage, parcels });
 
       for (const detail of parcels) {
         assert(sender === detail.sender, `${sender} !== ${detail.sender}`);
@@ -236,6 +249,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
 
   public addEventListener<K extends keyof T>(type: K, args: AsyncIsh<T[K], ResData>): void {
     const eventWrapper = async (event: T[K]): Promise<void> => {
+      this.logger.info("eventWrapper", { detail: event.detail });
+
       const senderPeerId: PeerId = decodeAddress(event.detail.sender); // Who sent the request
       const receiver: Address = encodePeerId(senderPeerId); // Who will receive the response
       const sender: Address = this.address;
@@ -244,10 +259,11 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
       try {
         const data: ResData = (await args(event)) ?? { type: BaseTypes.EmptyResponse };
         payload = { success: true, data };
-        this.logger.info("callback (eventWrapper)", payload);
+        this.logger.info("eventWrapper", payload);
       } catch (err: unknown) {
         const errorMessage: string = err instanceof Error ? err.message : String(err);
         payload = { success: false, message: errorMessage };
+        this.logger.warn("eventWrapper", payload);
       }
 
       const callbackId: Uuid = event.detail.batch.callbackId;

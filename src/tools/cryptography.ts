@@ -31,14 +31,6 @@ export function totp(secret: Uint8Array, targetTime: number = Date.now(), timeSt
   return sodium.crypto_generichash(32, timeBuffer, secret);
 }
 
-// export function fingerprintPayload(object: Payload, key?: Uint8Array): Uint8Array {
-//   // const stringPrint: string = Object.entries(object)
-//   //   .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
-//   //   .map(([, val]) => String(val))
-//   //   .join(",");
-//   // return sodium.crypto_generichash(32, stringPrint, key);
-// }
-
 export async function shamirSecretSharing(message: Message, shares: number, threshold: number): Promise<Base64[]> {
   const messageBuffer: Uint8Array = toBuffer(JSON.stringify(message));
   const fragments: Uint8Array[] = await split(messageBuffer, shares, threshold);

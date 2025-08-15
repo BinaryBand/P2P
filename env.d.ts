@@ -156,3 +156,9 @@ type MessageFragment = {
   id: Uuid;
   content: Base64;
 };
+
+/** LibP2P */
+
+type PeerId = import("@libp2p/interface").PeerId;
+type ClientNode = import("./src/tools/client").ClientNode;
+type PrivateKey = import("@libp2p/interface").PrivateKey;

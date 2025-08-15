@@ -7,12 +7,14 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "start": "npm run build && node dist/index.js",
+    "start": "npm run build && node --trace-warnings dist/index.js",
     "build": "tsc",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/libsodium-wrappers": "^0.7.14",
+    "@types/lodash": "^4.17.20",
     "@types/node": "^24.1.0"
   },
   "dependencies": {
@@ -23,12 +25,14 @@
     "@libp2p/identify": "^3.0.38",
     "@libp2p/kad-dht": "^15.1.10",
     "@libp2p/mdns": "^11.0.46",
+    "@libp2p/tcp": "^10.1.18",
     "@libp2p/webrtc": "^5.2.23",
     "@libp2p/websockets": "^9.2.18",
     "heap-js": "^2.6.0",
     "inquirer": "^12.9.1",
     "libp2p": "^2.9.0",
     "libsodium-wrappers": "^0.7.15",
+    "lodash": "^4.17.21",
     "lru-cache": "^11.1.0",
     "shamir-secret-sharing": "^0.0.4",
     "sqlite3": "^5.1.7",
