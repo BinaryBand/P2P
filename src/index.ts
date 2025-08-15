@@ -39,7 +39,6 @@ async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void
     console.log("Connected to bootstrap peer:", bootstrapPeer.id);
   } catch (err: unknown) {
     client.services.proto.handleLog("error", err, "bootstrapping");
-    (await keyPressListener).abort();
   }
 }
 

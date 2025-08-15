@@ -30,7 +30,7 @@ export default class HandshakeProto<T extends HandshakeEvents = HandshakeEvents>
   private static readonly NEIGHBORHOOD_SIZE: number = 10; // Nearest 10 peers
 
   private events: TypedEventTarget<Libp2pEvents>;
-  // private peerAuditTimer?: NodeJS.Timeout;
+  private peerAuditTimer?: NodeJS.Timeout;
   private peersCache = new DistanceCache<Address, PeerInfo>(this.address, HandshakeProto.NEIGHBORHOOD_SIZE);
 
   constructor(
@@ -249,14 +249,14 @@ export default class HandshakeProto<T extends HandshakeEvents = HandshakeEvents>
     return { peers, type: HandshakeTypes.GetNeighborsResponse };
   }
 
-  // // Periodically audits peers to ensure they are still reachable
-  // private async auditPeers(): Promise<void> {
-  //   const neighbors: Address[] = this.getNeighbors(HandshakeProto.NEIGHBORHOOD_SIZE);
-  //   neighbors.forEach((neighbor: Address) => {
-  //     const peerId: PeerId = decodeAddress(neighbor);
-  //     this.addPeer(peerId, Role.Tower);
-  //   });
-  // }
+  // Periodically audits peers to ensure they are still reachable
+  private async auditPeers(): Promise<void> {
+    const neighbors: Address[] = this.getNeighbors(HandshakeProto.NEIGHBORHOOD_SIZE);
+    neighbors.forEach((neighbor: Address) => {
+      const peerId: PeerId = decodeAddress(neighbor);
+      this.addPeer(peerId, Role.Tower);
+    });
+  }
 
   public async start(): Promise<void> {
     await super.start();
@@ -267,8 +267,8 @@ export default class HandshakeProto<T extends HandshakeEvents = HandshakeEvents>
     this.events.addEventListener("peer:identify", this.initiateHandshake.bind(this));
     this.events.addEventListener("peer:disconnect", this.peerDropped.bind(this));
 
-    // const randomDelay: number = Math.random() * 1000;
-    // this.peerAuditTimer = setInterval(this.auditPeers.bind(this), HandshakeProto.PEER_AUDIT_INTERVAL + randomDelay);
+    const randomDelay: number = Math.random() * 1000;
+    this.peerAuditTimer = setInterval(this.auditPeers.bind(this), HandshakeProto.PEER_AUDIT_INTERVAL + randomDelay);
   }
 
   public async stop(): Promise<void> {
@@ -280,9 +280,9 @@ export default class HandshakeProto<T extends HandshakeEvents = HandshakeEvents>
     this.events.removeEventListener("peer:identify", this.initiateHandshake.bind(this));
     this.events.removeEventListener("peer:disconnect", this.peerDropped.bind(this));
 
-    // if (this.peerAuditTimer !== undefined) {
-    //   clearInterval(this.peerAuditTimer);
-    //   this.peerAuditTimer = undefined;
-    // }
+    if (this.peerAuditTimer !== undefined) {
+      clearInterval(this.peerAuditTimer);
+      this.peerAuditTimer = undefined;
+    }
   }
 }

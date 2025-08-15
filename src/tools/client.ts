@@ -37,6 +37,7 @@ const bootstrapNodes = [
 
 const stockOptions = {
   connectionEncrypters: [noise()],
+  connectionGater: { denyDialMultiaddr: () => false },
   peerDiscovery: [
     // mdns(),
     bootstrap({ list: bootstrapNodes }),
