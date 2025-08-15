@@ -20,7 +20,7 @@ import inquirer from "inquirer";
 
 import MessageProto, { MessageEvents } from "./protocols/message-proto.js";
 import { toBuffer, encodePeerId, isAddress } from "./tools/typing.js";
-import { genericHash } from "./tools/cryptography.js";
+import { genericHash, sodium } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
 const bootstrapNodes: string[] = [
@@ -113,6 +113,7 @@ async function sendMessage(client: ClientNode, recipient: PeerId, messages: stri
 
 var client: ClientNode;
 async function main(): Promise<void> {
+  await sodium.ready;
   console.log("Starting application...");
 
   // Prompt the user for a seed password

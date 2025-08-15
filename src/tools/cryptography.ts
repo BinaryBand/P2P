@@ -1,14 +1,10 @@
-import { combine, split } from "shamir-secret-sharing";
-
-import sodium from "libsodium-wrappers";
-
-import { LRUCache } from "lru-cache";
-
 import { base64ToBytes, bytesToBase64, stringify, toBuffer } from "./typing.js";
 
-const hashCache = new LRUCache<string, Uint8Array>({ max: 256 });
+import { combine, split } from "shamir-secret-sharing";
+import { LRUCache } from "lru-cache";
+import sodium from "libsodium-wrappers";
 
-export { sodium };
+const hashCache = new LRUCache<string, Uint8Array>({ max: 256 });
 
 export function genericHash(input: Encoded, key?: Uint8Array): Uint8Array;
 export function genericHash(input: Uint8Array, key?: Uint8Array): Uint8Array;
@@ -54,3 +50,5 @@ export async function reconstructShamirSecret(shares: Base64[]): Promise<Message
   const secret: Uint8Array = await combine(fragments);
   return stringify(secret);
 }
+
+export { sodium };

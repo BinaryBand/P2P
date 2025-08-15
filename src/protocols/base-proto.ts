@@ -45,8 +45,8 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   }
   protected readonly logger: Logger;
 
-  private batches = new Map<Address, Set<Parcel<Payload>>>();
-  private batchTimers = new Map<Address, NodeJS.Timeout>();
+  // private batches = new Map<Address, Set<Parcel<Payload>>>();
+  // private batchTimers = new Map<Address, NodeJS.Timeout>();
   private callbackMap = new Map<Uuid, Callback>();
 
   private connectionCache = new LRUCache<PeerId, Connection>({ max: 256 });
@@ -148,27 +148,29 @@ export default class BaseProto<T extends ProtocolEvents> extends TypedEventEmitt
   }
 
   private async addToBatch(parcel: Parcel<Payload>): Promise<void> {
-    const userAddress: Address = parcel.receiver;
-    let batch: Set<Parcel<Payload>> | undefined = this.batches.get(userAddress);
-    if (batch === undefined) {
-      batch = new Set();
-      this.batches.set(userAddress, batch);
-    }
-    batch.add(parcel);
+    this.sendBatch([parcel]);
 
-    // Clear existing timer
-    const existingTimer: NodeJS.Timeout | undefined = this.batchTimers.get(userAddress);
-    if (existingTimer !== undefined) {
-      clearTimeout(existingTimer);
-    }
+    // const userAddress: Address = parcel.receiver;
+    // let batch: Set<Parcel<Payload>> | undefined = this.batches.get(userAddress);
+    // if (batch === undefined) {
+    //   batch = new Set();
+    //   this.batches.set(userAddress, batch);
+    // }
+    // batch.add(parcel);
 
-    // Dispatch batch if a new parcel hasn't arrived within the timeout
-    const launchTimer: NodeJS.Timeout = setTimeout(() => {
-      this.sendBatch(Array.from(batch));
-      this.batches.delete(userAddress);
-      this.batchTimers.delete(userAddress);
-    }, BaseProto.BATCH_TIMEOUT);
-    this.batchTimers.set(userAddress, launchTimer);
+    // // Clear existing timer
+    // const existingTimer: NodeJS.Timeout | undefined = this.batchTimers.get(userAddress);
+    // if (existingTimer !== undefined) {
+    //   clearTimeout(existingTimer);
+    // }
+
+    // // Dispatch batch if a new parcel hasn't arrived within the timeout
+    // const launchTimer: NodeJS.Timeout = setTimeout(() => {
+    //   this.sendBatch(Array.from(batch));
+    //   this.batches.delete(userAddress);
+    //   this.batchTimers.delete(userAddress);
+    // }, BaseProto.BATCH_TIMEOUT);
+    // this.batchTimers.set(userAddress, launchTimer);
   }
 
   private async sendParcel<T extends ReqData, U extends ResData>(parcel: Parcel<T>): Promise<Return<U>> {
