@@ -37,7 +37,6 @@ const bootstrapNodes = [
 
 const stockOptions = {
   connectionEncrypters: [noise()],
-  connectionGater: { denyDialMultiaddr: () => false },
   peerDiscovery: [
     // mdns(),
     bootstrap({ list: bootstrapNodes }),
@@ -45,7 +44,16 @@ const stockOptions = {
   streamMuxers: [yamux()],
   transports: [
     circuitRelayTransport(),
-    webRTC(),
+    webRTC({
+      rtcConfiguration: {
+        iceServers: [
+          { urls: "stun3.l.google.com:19302" },
+          { urls: "stun.services.mozilla.com:3478" },
+          { urls: "stun.ucsb.edu:3478" },
+          { urls: "stun.cloudflare.com:3478" },
+        ],
+      },
+    }),
     webRTCDirect(),
     webSockets(),
     tcp(), // TCP transport
