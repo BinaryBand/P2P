@@ -102,6 +102,7 @@ async function main(): Promise<void> {
           await bootstrapClient(client, bootstrapPeerId);
           break;
         case "pool":
+          console.log("Getting connected peers...");
           const pool: Address[] = client.services.proto.getNeighbors();
           console.log("Connected peers:", pool);
           break;

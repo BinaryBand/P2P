@@ -5,7 +5,7 @@ import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
 
 import { setMetadataDb, getMetadataDb, setFragmentsDb, getDataFragmentsDb } from "../helpers/database.js";
 import { bytesToBase64, isFragment, Role } from "../tools/typing.js";
-import { calculateDistance, orderPeers } from "../tools/routing.js";
+// import { calculateDistance, orderPeers } from "../tools/routing.js";
 import { genericHash } from "../tools/cryptography.js";
 import { assert } from "../tools/utils.js";
 
@@ -32,7 +32,7 @@ export default class SwarmProto<T extends SwarmEvents = SwarmEvents> extends Han
   private static readonly MAX_STORAGE_CACHE_SIZE: number = 2048;
   private static readonly LIGHT_AUDIT_INTERVAL: number = 60_000; // 1 minute
 
-  private lightAuditTimer?: NodeJS.Timeout;
+  // private lightAuditTimer?: NodeJS.Timeout;
   private metadataCache = new LRUCache<Base64, Set<Base64>>({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
   private storageCache = new LRUCache<Base64, DataFragment>({ max: SwarmProto.MAX_STORAGE_CACHE_SIZE });
 
@@ -294,52 +294,30 @@ export default class SwarmProto<T extends SwarmEvents = SwarmEvents> extends Han
     return { fragments, type: SwarmTypes.GetFragmentsResponse };
   }
 
-  // Periodically ensure neighbors' data stays up-to-date
-  private async lightAudit(): Promise<void> {
-    const neighbors: Address[] = this.getNeighbors();
-    const addrHash: Uint8Array = genericHash(this.address);
-    const maxDistance: number = neighbors
-      .map((addr: Address) => calculateDistance(addrHash, genericHash(addr)))
-      .reduce((a: number, b: number) => Math.max(a, b), 0);
+  // // Periodically ensure neighbors' data stays up-to-date
+  // private async lightAudit(): Promise<void> {
+  //   const neighbors: Address[] = this.getNeighbors();
+  //   const addrHash: Uint8Array = genericHash(this.address);
+  //   const maxDistance: number = neighbors
+  //     .map((addr: Address) => calculateDistance(addrHash, genericHash(addr)))
+  //     .reduce((a: number, b: number) => Math.max(a, b), 0);
 
-    // Map each metadata to its nearest candidate peers
-    for (const [key, metadataSet] of this.metadataCache.entries()) {
-      // Only consider metadata that is nearby
-      const distance: number = calculateDistance(addrHash, genericHash(key));
-      if (maxDistance < distance) continue;
+  //   // Map each metadata to its nearest candidate peers
+  //   for (const [key, metadataSet] of this.metadataCache.entries()) {
+  //     // Only consider metadata that is nearby
+  //     const distance: number = calculateDistance(addrHash, genericHash(key));
+  //     if (maxDistance < distance) continue;
 
-      const topCandidates: Address[] = orderPeers(key, neighbors, SwarmProto.SWARM_SIZE).map(({ value }) => value);
+  //     const topCandidates: Address[] = orderPeers(key, neighbors, SwarmProto.SWARM_SIZE).map(({ value }) => value);
 
-      topCandidates.forEach((neighbor: Address) => {
-        const metadata: Base64[] = [...metadataSet];
-        const prepped: Unstamped<SetMetadataRequest> = { hashKey: key, metadata, type: SwarmTypes.SetMetadataRequest };
-        const metadataRequest: SetMetadataRequest = this.stampRequest(prepped);
-        this.sendRequest(neighbor, metadataRequest);
-      });
-    }
-
-    // const nearbyFragmentKeys: Base64[] = [...this.storageCache.keys()].filter(
-    //   (key: Base64) => calculateDistance(addrHash, blake3(key)) < maxDistance
-    // );
-
-    // for (const key of nearbyFragmentKeys) {
-    //   const x = this.getLocalFragments([key]);
-
-    //   // const topCandidates: Address[] = orderPeers(key, neighbors)
-    //   //   .map(({ peer }) => peer)
-    //   //   .slice(0, SwarmProto.SWARM_SIZE);
-
-    //   // topCandidates.forEach((neighbor: Address) => {
-    //   //   const fragment: string | undefined = this.storageCache.get(key)?.data;
-
-    //   //   if (fragment !== undefined) {
-    //   //     const prep: Unstamped<SetFragmentsRequest> = { fragments: [fragment], type: SwarmTypes.SetFragmentsRequest };
-    //   //     const fragmentRequest: SetFragmentsRequest = this.stampRequest(prep);
-    //   //     requestMap.get(neighbor)!.push(fragmentRequest);
-    //   //   }
-    //   // });
-    // }
-  }
+  //     topCandidates.forEach((neighbor: Address) => {
+  //       const metadata: Base64[] = [...metadataSet];
+  //       const prepped: Unstamped<SetMetadataRequest> = { hashKey: key, metadata, type: SwarmTypes.SetMetadataRequest };
+  //       const metadataRequest: SetMetadataRequest = this.stampRequest(prepped);
+  //       this.sendRequest(neighbor, metadataRequest);
+  //     });
+  //   }
+  // }
 
   public async start(): Promise<void> {
     await super.start();
@@ -349,8 +327,8 @@ export default class SwarmProto<T extends SwarmEvents = SwarmEvents> extends Han
     this.addEventListener(SwarmTypes.SetFragmentsRequest, this.onSetFragmentsRequest.bind(this));
     this.addEventListener(SwarmTypes.GetFragmentsRequest, this.onGetFragmentsRequest.bind(this));
 
-    const randomDelay: number = Math.random() * 1000;
-    this.lightAuditTimer = setInterval(this.lightAudit.bind(this), SwarmProto.LIGHT_AUDIT_INTERVAL + randomDelay);
+    // const randomDelay: number = Math.random() * 1000;
+    // this.lightAuditTimer = setInterval(this.lightAudit.bind(this), SwarmProto.LIGHT_AUDIT_INTERVAL + randomDelay);
   }
 
   public async stop(): Promise<void> {
@@ -364,9 +342,9 @@ export default class SwarmProto<T extends SwarmEvents = SwarmEvents> extends Han
     this.metadataCache.clear();
     this.storageCache.clear();
 
-    if (this.lightAuditTimer !== undefined) {
-      clearInterval(this.lightAuditTimer);
-      this.lightAuditTimer = undefined;
-    }
+    // if (this.lightAuditTimer !== undefined) {
+    //   clearInterval(this.lightAuditTimer);
+    //   this.lightAuditTimer = undefined;
+    // }
   }
 }

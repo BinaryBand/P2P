@@ -61,6 +61,8 @@ export default class HandshakeProto<T extends HandshakeEvents = HandshakeEvents>
   }
 
   public getNeighbors(n: number = HandshakeProto.NEIGHBORHOOD_SIZE): Address[] {
+    this.logger.debug(`Fetching top ${n} neighbors`);
+    assert(n > 0, "Number of neighbors must be greater than zero");
     return this.peersCache
       .getTop(n)
       .map(({ peerId }) => peerId)
@@ -218,10 +220,9 @@ export default class HandshakeProto<T extends HandshakeEvents = HandshakeEvents>
       return;
     }
 
-    this.handleLog("info", `Initiating handshake with peer: ${detail.peerId}`, "initiateHandshake");
-
     try {
       const address: Address = encodePeerId(detail.peerId);
+      this.handleLog("info", `Initiating handshake with peer: ${address}`, "initiateHandshake");
 
       const prepped: Unstamped<InitiationRequest> = { role: this.role, type: HandshakeTypes.InitiationRequest };
       const request: InitiationRequest = this.stampRequest(prepped);

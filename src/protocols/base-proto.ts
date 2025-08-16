@@ -50,7 +50,7 @@ export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extend
   private callbackMap = new Map<Uuid, Callback>();
 
   private connectionCache = new LRUCache<PeerId, Connection>({ max: 256 });
-  private requestCache = new LRUCache<Base64, Promise<Acceptance<ResData>>>({ max: 256 });
+  // private requestCache = new LRUCache<Base64, Promise<Acceptance<ResData>>>({ max: 256 });
 
   constructor(components: Components) {
     super();
@@ -93,11 +93,11 @@ export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extend
   }
 
   private async getConnection(peerId: PeerId): Promise<Connection> {
-    const existingConnection: Connection | undefined = this.connectionCache.get(peerId);
-    if (existingConnection?.status === "open" && existingConnection?.direction === "outbound") {
-      this.connectionCache.set(peerId, existingConnection);
-      return existingConnection;
-    }
+    // const existingConnection: Connection | undefined = this.connectionCache.get(peerId);
+    // if (existingConnection?.status === "open" && existingConnection?.direction === "outbound") {
+    //   this.connectionCache.set(peerId, existingConnection);
+    //   return existingConnection;
+    // }
 
     const newConnection: Connection = await this.connectionManager.openConnection(peerId);
     this.connectionCache.set(peerId, newConnection);
@@ -139,7 +139,10 @@ export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extend
   }
 
   private async sendBatch<T extends Payload>(parcels: Parcel<T>[]): Promise<void> {
-    const peerId: PeerId = decodeAddress(parcels[0].receiver);
+    const receivers: Set<Address> = new Set(parcels.map((p) => p.receiver));
+    assert(receivers.size === 1, "All parcels must have the same receiver");
+
+    const peerId: PeerId = decodeAddress(receivers.values().next().value!);
     let outgoing: Stream | undefined;
 
     try {
@@ -193,17 +196,17 @@ export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extend
     receiver: Address,
     payload: T
   ): Promise<Acceptance<U>> {
-    const fingerprint: Base64 = `${Formats.Base64},${sodium.crypto_generichash(32, payload.stamp, receiver, "base64")}`;
-    if (this.requestCache.has(fingerprint)) {
-      return this.requestCache.get(fingerprint)! as Promise<Acceptance<U>>;
-    }
+    // const fingerprint: Base64 = `${Formats.Base64},${sodium.crypto_generichash(32, payload.stamp, receiver, "base64")}`;
+    // if (this.requestCache.has(fingerprint)) {
+    //   return this.requestCache.get(fingerprint)! as Promise<Acceptance<U>>;
+    // }
 
     const callbackId: Uuid = crypto.randomUUID();
     const parcel: Parcel<T> = { batch: { callbackId, payload }, receiver, sender: this.address };
     const result: Return<U> = await this.sendParcel<T, U>(parcel);
     assert(result.success, (result as Rejection).message);
 
-    this.requestCache.set(fingerprint, Promise.resolve(result));
+    // this.requestCache.set(fingerprint, Promise.resolve(result));
     return result;
   }
 
