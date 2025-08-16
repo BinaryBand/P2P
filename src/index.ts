@@ -2,6 +2,7 @@ import { PeerId, PeerInfo, PrivateKey } from "@libp2p/interface";
 import { peerIdFromString } from "@libp2p/peer-id";
 
 import inquirer from "inquirer";
+import { input } from "@inquirer/prompts";
 
 import { getNewClient, getPrivateKeyFromSeed } from "./tools/client.js";
 import { encodePeerId, isAddress } from "./tools/typing.js";
@@ -15,30 +16,27 @@ async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void
 
   console.log("Started bootstrapping with peer:", peerId.toString());
 
-  // Set up inquirer to listen for a key press
-  const abortController = new AbortController();
-  const keyPressListener = inquirer.prompt({
-    type: "input",
-    name: "abort",
-    message: 'Press "q" to abort bootstrapping...',
-    filter: (input) => input.trim().toLowerCase(),
-  });
+  const abortController: AbortController = new AbortController();
 
   try {
+    const keyPressListener = input(
+      { message: 'Press "q" to abort bootstrapping...' },
+      { signal: abortController.signal }
+    );
+
     keyPressListener.then((answers) => {
-      if (answers.abort === "q") {
+      if (answers === "q") {
         console.log("Aborting bootstrapping...");
         abortController.abort();
       }
     });
 
-    const bootstrapPeer: PeerInfo = await client.peerRouting.findPeer(peerId, { signal: abortController.signal });
-    console.log("Found bootstrap peer:", bootstrapPeer.id);
-
-    await client.dialProtocol(bootstrapPeer.multiaddrs, BaseProto.PROTOCOL, { signal: abortController.signal });
-    console.log("Connected to bootstrap peer:", bootstrapPeer.id);
+    await client.peerRouting.findPeer(peerId, { signal: abortController.signal });
+    console.log("Found peer:", peerId.toString());
   } catch (err: unknown) {
+    console.warn("Error during bootstrapping:", err);
     client.services.proto.handleLog("error", err, "bootstrapping");
+    abortController.abort();
   }
 }
 
@@ -77,6 +75,7 @@ async function main(): Promise<void> {
 
   let running: boolean = true;
   while (running) {
+    inquirer.restoreDefaultPrompts();
     try {
       const { action } = await inquirer.prompt({
         type: "list",
@@ -102,7 +101,6 @@ async function main(): Promise<void> {
           await bootstrapClient(client, bootstrapPeerId);
           break;
         case "pool":
-          console.log("Getting connected peers...");
           const pool: Address[] = client.services.proto.getNeighbors();
           console.log("Connected peers:", pool);
           break;
