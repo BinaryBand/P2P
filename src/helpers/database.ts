@@ -3,6 +3,7 @@ import SwarmProto from "../protocols/swarm-proto.js";
 import sqlite3, { Database, Statement } from "sqlite3";
 import path from "path";
 import fs from "fs";
+import { hashFromData } from "../tools/cryptography.js";
 
 const dbFilePath: string = "storage/database.db";
 const dirName: string = path.dirname(dbFilePath);
@@ -75,7 +76,7 @@ export function setFragmentsDb(fragments: Fragment[], timestamp: number = Date.n
         );
 
         fragments.forEach((frag: Fragment) => {
-          const hashKey: Base64 = SwarmProto.hashFromData(frag);
+          const hashKey: Base64 = hashFromData(frag);
           insertStmt.run(hashKey, frag, timestamp);
         });
 

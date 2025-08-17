@@ -9,6 +9,7 @@ import { tcp } from "@libp2p/tcp";
 
 // Service imports
 import MessageProto, { MessageEvents } from "../protocols/message-proto.js";
+// import SwarmProto, { SwarmEvents } from "../protocols/swarm-proto.js";
 import { identify } from "@libp2p/identify";
 import { kadDHT } from "@libp2p/kad-dht";
 import { ping } from "@libp2p/ping";
@@ -44,16 +45,7 @@ const stockOptions = {
   streamMuxers: [yamux()],
   transports: [
     circuitRelayTransport(),
-    webRTC({
-      rtcConfiguration: {
-        iceServers: [
-          { urls: "stun3.l.google.com:19302" },
-          { urls: "stun.services.mozilla.com:3478" },
-          { urls: "stun.ucsb.edu:3478" },
-          { urls: "stun.cloudflare.com:3478" },
-        ],
-      },
-    }),
+    webRTC(),
     webRTCDirect(),
     webSockets(),
     tcp(), // TCP transport
@@ -71,7 +63,7 @@ function getClientOptions(addresses: string[], privateKey?: PrivateKey) {
 
 export function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?: string): Promise<ClientNode> {
   const options = getClientOptions(addresses, privateKey);
-  return createLibp2p({ ...options, services: { ...options.services, proto: MessageProto.Message(passphrase) } });
+  return createLibp2p({ ...options, services: { ...options.services, proto: MessageProto.init(passphrase) } });
 }
 
 export async function getPrivateKeyFromSeed(password: string): Promise<PrivateKey> {

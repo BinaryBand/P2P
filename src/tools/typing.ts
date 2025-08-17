@@ -10,6 +10,7 @@ import { SwarmTypes } from "../protocols/swarm-proto.js";
 export enum Role {
   Phone = "phone",
   Tower = "tower",
+  Gateway = "gateway",
 }
 
 export type Address = `${Formats.Base58},${string}`;
@@ -110,20 +111,19 @@ export function isBatchItem(batchItem: unknown): batchItem is BatchItem<Payload>
 }
 
 export function isRequest(request: unknown): request is ReqData {
-  if (!isObject(request, ["type", "stamp"]) || !isBase64(request.stamp)) {
+  if (!isObject(request, ["type"])) {
     return false;
   }
 
-  const stamp: Base64 = request.stamp;
   switch (request.type) {
     case HandshakeTypes.InitiationRequest:
       if (isObject(request, ["role"]) && isRole(request.role)) {
-        const control: InitiationRequest = { role: request.role, stamp, type: request.type };
+        const control: InitiationRequest = { role: request.role, type: request.type };
         return _.isEqual(control, request);
       }
       break;
     case HandshakeTypes.PingRequest:
-      const control: PingRequest = { stamp, type: request.type };
+      const control: PingRequest = { type: request.type };
       return _.isEqual(control, request);
     case HandshakeTypes.GetNeighborsRequest:
       if (
@@ -136,7 +136,6 @@ export function isRequest(request: unknown): request is ReqData {
           n: request.n,
           role: request.role,
           hash: request.hash,
-          stamp,
           type: request.type,
         };
         return _.isEqual(control, request);
@@ -144,13 +143,13 @@ export function isRequest(request: unknown): request is ReqData {
       break;
     case SwarmTypes.SetFragmentsRequest:
       if (isObject(request, ["fragments"]) && isArray(request.fragments, isFragment)) {
-        const control: SetFragmentsRequest = { fragments: request.fragments, stamp, type: request.type };
+        const control: SetFragmentsRequest = { fragments: request.fragments, type: request.type };
         return _.isEqual(control, request);
       }
       break;
     case SwarmTypes.GetFragmentsRequest:
       if (isObject(request, ["hashes"]) && isArray(request.hashes, isBase64)) {
-        const control: GetFragmentsRequest = { hashes: request.hashes, stamp, type: request.type };
+        const control: GetFragmentsRequest = { hashes: request.hashes, type: request.type };
         return _.isEqual(control, request);
       }
       break;
@@ -163,7 +162,6 @@ export function isRequest(request: unknown): request is ReqData {
         const control: SetMetadataRequest = {
           hashKey: request.hashKey,
           metadata: request.metadata,
-          stamp,
           type: request.type,
         };
         return _.isEqual(control, request);
@@ -171,7 +169,7 @@ export function isRequest(request: unknown): request is ReqData {
       break;
     case SwarmTypes.GetMetadataRequest:
       if (isObject(request, ["hashKey"]) && isBase64(request.hashKey)) {
-        const control: GetMetadataRequest = { hashKey: request.hashKey, stamp, type: request.type };
+        const control: GetMetadataRequest = { hashKey: request.hashKey, type: request.type };
         return _.isEqual(control, request);
       }
       break;
@@ -211,12 +209,24 @@ function isResponse(response: unknown): response is ResData {
   switch (response.type) {
     case BaseTypes.EmptyResponse:
       return _.isEqual({ type: response.type }, response);
-    case HandshakeTypes.PingResponse:
-      if (isObject(response, ["role"]) && isRole(response.role)) {
-        const control: PingResponse = { role: response.role, type: response.type };
+    case HandshakeTypes.InitiationResponse:
+      if (
+        isObject(response, ["passphrase", "role"]) &&
+        typeof response.passphrase === "string" &&
+        isRole(response.role)
+      ) {
+        const control: InitiationResponse = {
+          passphrase: response.passphrase,
+          role: response.role,
+          type: response.type,
+        };
         return _.isEqual(control, response);
       }
       break;
+    case HandshakeTypes.PingResponse:
+      const control: PingResponse = { type: response.type };
+      return _.isEqual(control, response);
+
     case HandshakeTypes.GetNeighborsResponse:
       if (isObject(response, ["peers"]) && isArray(response.peers, isAddress)) {
         const control: GetNeighborsResponse = { peers: response.peers, type: response.type };

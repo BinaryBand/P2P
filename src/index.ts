@@ -1,14 +1,12 @@
-import { PeerId, PeerInfo, PrivateKey } from "@libp2p/interface";
+import { PeerId, PrivateKey } from "@libp2p/interface";
 import { peerIdFromString } from "@libp2p/peer-id";
 
 import inquirer from "inquirer";
-import { input } from "@inquirer/prompts";
 
 import { getNewClient, getPrivateKeyFromSeed } from "./tools/client.js";
 import { encodePeerId, isAddress } from "./tools/typing.js";
 import { sodium } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
-import BaseProto from "./protocols/base-proto.js";
 
 async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void> {
   assert(!client.peerId.equals(peerId), "Cannot bootstrap to self");
@@ -19,23 +17,13 @@ async function bootstrapClient(client: ClientNode, peerId: PeerId): Promise<void
   const abortController: AbortController = new AbortController();
 
   try {
-    const keyPressListener = input(
-      { message: 'Press "q" to abort bootstrapping...' },
-      { signal: abortController.signal }
-    );
-
-    keyPressListener.then((answers) => {
-      if (answers === "q") {
-        console.log("Aborting bootstrapping...");
-        abortController.abort();
-      }
-    });
-
     await client.peerRouting.findPeer(peerId, { signal: abortController.signal });
     console.log("Found peer:", peerId.toString());
+
+    await client.dial(peerId, { signal: abortController.signal });
+    console.log("Connected to peer:", peerId.toString());
   } catch (err: unknown) {
     console.warn("Error during bootstrapping:", err);
-    client.services.proto.handleLog("error", err, "bootstrapping");
     abortController.abort();
   }
 }
@@ -66,16 +54,12 @@ async function main(): Promise<void> {
   client = await getNewClient(["/ip4/0.0.0.0/udp/0/webrtc-direct", "/ip4/127.0.0.1/tcp/0/ws"], privateKey);
 
   await client.start();
-  console.log("Client started with ID:", client.peerId.toString(), "Please wait for connections...");
-  await new Promise((resolve) => setTimeout(resolve, 3000));
-
-  console.log("Client is ready. You can now interact with the network.");
-  console.log("Your Peer ID:", encodePeerId(client.peerId));
-  console.log("Your Bootstrap Addresses:");
+  console.log("Client started with ID:", client.peerId.toString());
 
   let running: boolean = true;
   while (running) {
-    inquirer.restoreDefaultPrompts();
+    client.services.proto.logger.info("Client is running");
+
     try {
       const { action } = await inquirer.prompt({
         type: "list",
@@ -124,14 +108,14 @@ async function main(): Promise<void> {
           break;
       }
     } catch (err: unknown) {
-      client.services.proto.handleLog("error", err, "main");
+      console.error(err, "main");
     }
   }
 }
 
 main()
   .catch((err) => {
-    client.services.proto.handleLog("error", err, "main");
+    console.error(err, "main");
   })
   .finally(async () => {
     await client?.stop();

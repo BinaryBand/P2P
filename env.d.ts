@@ -39,16 +39,12 @@ type DistancePair<T> = {
 
 /* Requests */
 
-type Unstamped<T extends ReqData> = Omit<T, "stamp">;
-
 interface InitiationRequest {
   role: Role;
-  stamp: Base64;
   type: import("./src/protocols/handshake-proto").HandshakeTypes.InitiationRequest;
 }
 
 interface PingRequest {
-  stamp: Base64;
   type: import("./src/protocols/handshake-proto").HandshakeTypes.PingRequest;
 }
 
@@ -56,32 +52,27 @@ interface GetNeighborsRequest {
   n: number;
   hash: Base64;
   role: Role;
-  stamp: Base64;
   type: import("./src/protocols/handshake-proto").HandshakeTypes.GetNeighborsRequest;
 }
 
 interface SetMetadataRequest {
   hashKey: Base64;
   metadata: Base64[];
-  stamp: Base64;
   type: import("./src/protocols/swarm-proto").SwarmTypes.SetMetadataRequest;
 }
 
 interface GetMetadataRequest {
   hashKey: Base64;
-  stamp: Base64;
   type: import("./src/protocols/swarm-proto").SwarmTypes.GetMetadataRequest;
 }
 
 interface SetFragmentsRequest {
   fragments: Fragment[];
-  stamp: Base64;
   type: import("./src/protocols/swarm-proto").SwarmTypes.SetFragmentsRequest;
 }
 
 interface GetFragmentsRequest {
   hashes: Base64[];
-  stamp: Base64;
   type: import("./src/protocols/swarm-proto").SwarmTypes.GetFragmentsRequest;
 }
 
@@ -91,8 +82,13 @@ interface EmptyResponse {
   type: import("./src/protocols/base-proto").BaseTypes.EmptyResponse;
 }
 
-interface PingResponse {
+interface InitiationResponse {
+  passphrase: string;
   role: Role;
+  type: import("./src/protocols/handshake-proto").HandshakeTypes.InitiationResponse;
+}
+
+interface PingResponse {
   type: import("./src/protocols/handshake-proto").HandshakeTypes.PingResponse;
 }
 
@@ -120,7 +116,13 @@ type ReqData =
   | SetFragmentsRequest
   | GetFragmentsRequest;
 
-type ResData = EmptyResponse | PingResponse | GetNeighborsResponse | GetMetadataResponse | GetFragmentsResponse;
+type ResData =
+  | EmptyResponse
+  | InitiationResponse
+  | PingResponse
+  | GetNeighborsResponse
+  | GetMetadataResponse
+  | GetFragmentsResponse;
 
 type Payload = ReqData | Return;
 

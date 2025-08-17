@@ -6,18 +6,9 @@ import { Uint8ArrayList } from "uint8arraylist";
 import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
-import {
-  isParcel,
-  isReturn,
-  isRequest,
-  decodeAddress,
-  encodePeerId,
-  stringify,
-  toBuffer,
-  Formats,
-} from "../tools/typing.js";
+import { isParcel, isReturn, isRequest, decodeAddress, encodePeerId, stringify, toBuffer } from "../tools/typing.js";
+import DistanceCache from "../helpers/distance-cache.js";
 import { getLogger, Logger } from "../helpers/logger.js";
-import { sodium } from "../tools/cryptography.js";
 import { assert } from "../tools/utils.js";
 
 export enum BaseTypes {
@@ -26,9 +17,9 @@ export enum BaseTypes {
 }
 
 export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extends TypedEventEmitter<T> {
-  public static readonly PROTOCOL: string = "/secret-handshake/proto/0.7.1";
+  public readonly PROTOCOL: string = "/secret-handshake/proto/0.7.1";
 
-  // private static readonly BATCH_TIMEOUT: number = 250; // send batch if no new parcels arrive within a quarter of a second
+  private static readonly BATCH_TIMEOUT: number = 250; // send batch if no new parcels arrive within a quarter of a second
   private static readonly CALLBACK_TIMEOUT: number = 10_000; // 10 seconds until callback request expires
   protected static readonly HEAVY_CALLBACK_TIMEOUT: number = 5_000; // 5 second timeout for heavy operations
 
@@ -43,14 +34,16 @@ export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extend
   protected get address(): Address {
     return encodePeerId(this.peerId);
   }
-  protected readonly logger: Logger;
+  public readonly logger: Logger;
 
-  // private batches = new Map<Address, Set<Parcel<Payload>>>();
-  // private batchTimers = new Map<Address, NodeJS.Timeout>();
+  protected peersCache = new DistanceCache<Address, PeerInfo>(this.address, 128);
+
+  private batchMap = new Map<Address, Set<Parcel<Payload>>>();
+  private batchTimers = new Map<Address, NodeJS.Timeout>();
   private callbackMap = new Map<Uuid, Callback>();
 
-  private connectionCache = new LRUCache<PeerId, Connection>({ max: 256 });
-  // private requestCache = new LRUCache<Base64, Promise<Acceptance<ResData>>>({ max: 256 });
+  private connectionCache = new LRUCache<PeerId, Connection>({ max: 512 });
+  private streamCache = new LRUCache<PeerId, Stream>({ max: 512 });
 
   constructor(components: Components) {
     super();
@@ -63,45 +56,40 @@ export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extend
     this.registrar = components.registrar;
   }
 
-  public handleLog(level: "error" | "warn" | "info", message: unknown, context: string): void {
-    switch (level) {
-      case "error":
-        this.logger.error(`Error ${context}:`, message);
-        break;
-      case "warn":
-        this.logger.warn(`Warning ${context}:`, message);
-        break;
-      case "info":
-        this.logger.info(`Info ${context}:`, message);
-        break;
-    }
+  protected addPeer(peerId: PeerId, role: Role): void {
+    const address: Address = encodePeerId(peerId);
+    this.peersCache.add(address, { peerId, role, timestamp: Date.now() });
   }
 
-  protected async getWithTimeout<T>(promise: Promise<T>, delay: number): Promise<T> {
-    let timer: NodeJS.Timeout;
-    const timeoutPromise = new Promise<T>((_, rej) => {
-      timer = setTimeout(() => {
-        const message: string = "Timeout while waiting for response";
-        rej({ success: false, message });
-      }, delay);
-    });
-
-    return Promise.race([promise, timeoutPromise]).then((t: T) => {
-      clearTimeout(timer);
-      return t;
-    });
+  protected dropPeer(peerId: PeerId): void {
+    const address: Address = encodePeerId(peerId);
+    this.peersCache.delete(address);
+    this.connectionCache.delete(peerId);
+    this.streamCache.delete(peerId);
   }
 
   private async getConnection(peerId: PeerId): Promise<Connection> {
-    // const existingConnection: Connection | undefined = this.connectionCache.get(peerId);
-    // if (existingConnection?.status === "open" && existingConnection?.direction === "outbound") {
-    //   this.connectionCache.set(peerId, existingConnection);
-    //   return existingConnection;
-    // }
+    let connection: Connection | undefined = this.connectionCache.get(peerId);
 
-    const newConnection: Connection = await this.connectionManager.openConnection(peerId);
-    this.connectionCache.set(peerId, newConnection);
-    return newConnection;
+    if (connection?.status !== "open" || connection.direction !== "outbound") {
+      await connection?.close();
+      connection = await this.connectionManager.openConnection(peerId);
+      this.connectionCache.set(peerId, connection);
+    }
+
+    return connection;
+  }
+
+  private async getStream(connection: Connection, peerId: PeerId): Promise<Stream> {
+    let stream: Stream | undefined = this.streamCache.get(peerId);
+
+    if (stream?.status !== "open" || stream.direction !== "outbound") {
+      await stream?.close();
+      stream = await connection.newStream(this.PROTOCOL);
+      this.streamCache.set(peerId, stream);
+    }
+
+    return stream;
   }
 
   private async decodeStream(stream: Stream): Promise<string> {
@@ -116,11 +104,26 @@ export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extend
 
       chunks.push(stringify()); // Flush any remaining data
     } catch (err: unknown) {
-      this.handleLog("error", err, "decodeStream");
+      this.logger.warn("Failed to decode stream", err);
       throw new Error("Failed to decode stream");
     }
 
     return chunks.join("");
+  }
+
+  protected async getWithTimeout<T>(promise: Promise<T>, delay: number): Promise<T> {
+    let timer: NodeJS.Timeout;
+    const timeoutPromise = new Promise<T>((_, reject) => {
+      timer = setTimeout(() => {
+        const message: string = "Timeout while waiting for response";
+        reject({ success: false, message });
+      }, delay);
+    });
+
+    return Promise.race([promise, timeoutPromise]).then((t: T) => {
+      clearTimeout(timer);
+      return t;
+    });
   }
 
   // Create a promise that resolves when the response is received
@@ -142,71 +145,59 @@ export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extend
     const receivers: Set<Address> = new Set(parcels.map((p) => p.receiver));
     assert(receivers.size === 1, "All parcels must have the same receiver");
 
-    const peerId: PeerId = decodeAddress(receivers.values().next().value!);
-    let outgoing: Stream | undefined;
-
     try {
+      const peerId: PeerId = decodeAddress(receivers.values().next().value!);
       const connection: Connection = await this.getConnection(peerId);
-      outgoing = await connection.newStream(BaseProto.PROTOCOL);
+      const outgoing: Stream = await this.getStream(connection, peerId);
 
       const parcelsString: string = JSON.stringify(parcels);
       const parcelsBuffer: Uint8Array = toBuffer(parcelsString);
       await pipe([parcelsBuffer], outgoing);
-
-      this.logger.info("sendBatch", { parcelsString });
     } catch (err: unknown) {
-      this.handleLog("error", err, "sendBatch");
-    } finally {
-      outgoing?.close();
+      this.logger.error("sendBatch", err);
     }
   }
 
   private async addToBatch(parcel: Parcel<Payload>): Promise<void> {
-    this.sendBatch([parcel]);
+    const userAddress: Address = parcel.receiver;
+    let batch: Set<Parcel<Payload>> | undefined = this.batchMap.get(userAddress);
+    if (batch === undefined) {
+      batch = new Set<Parcel<Payload>>();
+      this.batchMap.set(userAddress, batch);
+    }
+    batch.add(parcel);
 
-    // const userAddress: Address = parcel.receiver;
-    // let batch: Set<Parcel<Payload>> | undefined = this.batches.get(userAddress);
-    // if (batch === undefined) {
-    //   batch = new Set();
-    //   this.batches.set(userAddress, batch);
-    // }
-    // batch.add(parcel);
+    // Clear existing timer
+    const existingTimer: NodeJS.Timeout | undefined = this.batchTimers.get(userAddress);
+    if (existingTimer !== undefined) {
+      clearTimeout(existingTimer);
+    }
 
-    // // Clear existing timer
-    // const existingTimer: NodeJS.Timeout | undefined = this.batchTimers.get(userAddress);
-    // if (existingTimer !== undefined) {
-    //   clearTimeout(existingTimer);
-    // }
-
-    // // Dispatch batch if a new parcel hasn't arrived within the timeout
-    // const launchTimer: NodeJS.Timeout = setTimeout(() => {
-    //   this.sendBatch(Array.from(batch));
-    //   this.batches.delete(userAddress);
-    //   this.batchTimers.delete(userAddress);
-    // }, BaseProto.BATCH_TIMEOUT);
-    // this.batchTimers.set(userAddress, launchTimer);
+    // Dispatch batch if a new parcel hasn't arrived within the timeout
+    const launchTimer: NodeJS.Timeout = setTimeout(() => {
+      this.sendBatch(Array.from(batch));
+      this.batchMap.delete(userAddress);
+      this.batchTimers.delete(userAddress);
+    }, BaseProto.BATCH_TIMEOUT);
+    this.batchTimers.set(userAddress, launchTimer);
   }
 
-  private async sendParcel<T extends ReqData, U extends ResData>(parcel: Parcel<T>): Promise<Return<U>> {
+  private async sendParcel<U extends ResData, T extends ReqData = ReqData>(parcel: Parcel<T>): Promise<Return<U>> {
     this.addToBatch(parcel);
     return this.registerCallback(parcel, BaseProto.CALLBACK_TIMEOUT);
   }
 
-  protected async sendRequest<T extends ReqData, U extends ResData>(
+  protected async sendRequest<U extends ResData, T extends ReqData = ReqData>(
     receiver: Address,
     payload: T
   ): Promise<Acceptance<U>> {
-    // const fingerprint: Base64 = `${Formats.Base64},${sodium.crypto_generichash(32, payload.stamp, receiver, "base64")}`;
-    // if (this.requestCache.has(fingerprint)) {
-    //   return this.requestCache.get(fingerprint)! as Promise<Acceptance<U>>;
-    // }
+    this.logger.debug("sendRequest", payload);
 
     const callbackId: Uuid = crypto.randomUUID();
     const parcel: Parcel<T> = { batch: { callbackId, payload }, receiver, sender: this.address };
-    const result: Return<U> = await this.sendParcel<T, U>(parcel);
+    const result: Return<U> = await this.sendParcel<U, T>(parcel);
     assert(result.success, (result as Rejection).message);
 
-    // this.requestCache.set(fingerprint, Promise.resolve(result));
     return result;
   }
 
@@ -224,13 +215,13 @@ export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extend
   }
 
   private async onIncomingStream({ connection, stream }: IncomingStreamData): Promise<void> {
+    this.logger.debug("onIncomingStream", connection.remotePeer.toString());
     const rawMessage: string = await this.decodeStream(stream);
     stream.close();
 
     const sender: Address = encodePeerId(connection.remotePeer);
     try {
       const parcels: Parcel<Payload>[] = this.parseIncoming(rawMessage);
-      this.logger.info("onIncomingStream", { rawMessage, parcels });
 
       for (const detail of parcels) {
         assert(sender === detail.sender, `${sender} !== ${detail.sender}`);
@@ -246,14 +237,13 @@ export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extend
         }
       }
     } catch (err: unknown) {
-      this.handleLog("error", err, "onIncomingStream");
+      this.logger.error("onIncomingStream", err);
     }
   }
 
+  // Override the addEventListener method to handle returns from network requests
   public addEventListener<K extends keyof T>(type: K, args: AsyncIsh<T[K], ResData>): void {
     const eventWrapper = async (event: T[K]): Promise<void> => {
-      this.logger.info("eventWrapper", { detail: event.detail });
-
       const senderPeerId: PeerId = decodeAddress(event.detail.sender); // Who sent the request
       const receiver: Address = encodePeerId(senderPeerId); // Who will receive the response
       const sender: Address = this.address;
@@ -274,7 +264,7 @@ export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extend
 
       this.addToBatch(returnParcel).catch((err: unknown) => {
         const message: string = err instanceof Error ? err.message : String(err);
-        console.error("Error sending parcel", message);
+        this.logger.error("Error sending parcel", message);
       });
     };
 
@@ -282,11 +272,11 @@ export default class BaseProto<T extends ProtocolEvents = ProtocolEvents> extend
   }
 
   public async start(): Promise<void> {
-    await this.registrar.handle(BaseProto.PROTOCOL, this.onIncomingStream.bind(this));
+    await this.registrar.handle(this.PROTOCOL, this.onIncomingStream.bind(this));
   }
 
   public async stop(): Promise<void> {
-    await this.registrar.unhandle(BaseProto.PROTOCOL);
-    this.connectionCache.clear();
+    await this.registrar.unhandle(this.PROTOCOL);
+    this.streamCache.clear();
   }
 }

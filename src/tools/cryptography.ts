@@ -22,6 +22,11 @@ export function genericHash(input: Encoded | Uint8Array, key?: Uint8Array): Uint
   return hash;
 }
 
+export function hashFromData(data: Encoded): Base64 {
+  const key: Uint8Array = genericHash(data);
+  return bytesToBase64(key);
+}
+
 const TIME_STEP: number = 30_000;
 
 export function totp(secret: Uint8Array, targetTime: number = Date.now(), timeStep: number = TIME_STEP): Uint8Array {
