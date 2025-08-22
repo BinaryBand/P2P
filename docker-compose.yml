@@ -1,0 +1,74 @@
+version: "3.8"
+
+services:
+  p2p-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: p2p-node
+    restart: unless-stopped
+    ports:
+      # Map container ports to host ports
+      - "4001:4001"
+      - "8080:8080"
+    volumes:
+      # Persist storage data
+      - ./storage:/app/storage
+      # Optional: mount logs directory
+      - ./logs:/app/logs
+    environment:
+      # Set Node.js environment
+      - NODE_ENV=production
+      # Optional: Add any environment variables your app needs
+      - LOG_LEVEL=info
+    networks:
+      - p2p-network
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+
+  # Optional: Add a second P2P node for testing
+  p2p-node-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: p2p-node-2
+    restart: unless-stopped
+    ports:
+      - "4002:4001"
+      - "8081:8080"
+    volumes:
+      - ./storage2:/app/storage
+      - ./logs2:/app/logs
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+    networks:
+      - p2p-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    profiles:
+      - multi-node
+
+networks:
+  p2p-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  p2p-storage:
+    driver: local
