@@ -9,13 +9,18 @@
   "scripts": {
     "start": "npm run build && node --trace-warnings dist/index.js",
     "build": "tsc",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/libsodium-wrappers": "^0.7.14",
     "@types/lodash": "^4.17.20",
-    "@types/node": "^24.1.0"
+    "@types/node": "^24.1.0",
+    "jest": "^30.0.5",
+    "ts-jest": "^29.4.1"
   },
   "dependencies": {
     "@chainsafe/libp2p-noise": "^16.1.4",
