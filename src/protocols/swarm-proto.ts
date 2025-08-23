@@ -307,29 +307,143 @@ export default class SwarmProto<T extends SwarmEvents = SwarmEvents> extends Han
     return { fragments, type: SwarmTypes.GetFragmentsResponse };
   }
 
-  // Periodically ensure neighbors' data stays up-to-date
+  // Periodically ensure neighbors' data stays up-to-date with random distribution
   private async lightAudit(): Promise<void> {
-    const neighbors: Address[] = this.getNeighbors();
-    const addrHash: Uint8Array = genericHash(this.address);
+    const allNeighbors: Address[] = this.getNeighbors();
+    if (allNeighbors.length === 0) {
+      this.logger.debug("lightAudit", "No neighbors available for audit");
+      return;
+    }
 
-    const maxDistance: number = neighbors
+    const addrHash: Uint8Array = genericHash(this.address);
+    const maxDistance: number = allNeighbors
       .map((addr: Address) => calculateDistance(addrHash, genericHash(addr)))
       .reduce((a: number, b: number) => Math.max(a, b), 0);
 
-    // Map each metadata to its nearest candidate peers
+    // Randomly select a subset of neighbors for this audit cycle
+    const auditSubsetSize: number = Math.min(Math.ceil(allNeighbors.length * 0.6), allNeighbors.length);
+    const selectedNeighbors: Address[] = this.shuffleArray([...allNeighbors]).slice(0, auditSubsetSize);
+
+    this.logger.debug("lightAudit", `Auditing ${selectedNeighbors.length} of ${allNeighbors.length} neighbors`);
+
+    // Audit metadata cache
+    await this.auditMetadataCache(selectedNeighbors, addrHash, maxDistance);
+
+    // Audit storage cache (data fragments)
+    await this.auditStorageCache(selectedNeighbors, addrHash, maxDistance);
+  }
+
+  // Helper method to shuffle an array using Fisher-Yates algorithm
+  private shuffleArray<T>(array: T[]): T[] {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
+
+  // Audit metadata and ensure proper distribution
+  private async auditMetadataCache(neighbors: Address[], addrHash: Uint8Array, maxDistance: number): Promise<void> {
     for (const [key, metadataSet] of this.metadataCache.entries()) {
       // Only consider metadata that is nearby
       const distance: number = calculateDistance(addrHash, genericHash(key));
-
       if (maxDistance < distance) continue;
 
-      const topCandidates: Address[] = orderPeers(key, neighbors, SwarmProto.SWARM_SIZE).map(({ value }) => value);
-      topCandidates.forEach((neighbor: Address) => {
-        const metadata: Base64[] = Array.from(metadataSet.values());
-        const metadataRequest: SetMetadataRequest = { hashKey: key, metadata, type: SwarmTypes.SetMetadataRequest };
-        this.sendRequest(neighbor, metadataRequest);
-      });
+      // Find the ideal candidates for this metadata
+      const idealCandidates: Address[] = orderPeers(key, neighbors, SwarmProto.SWARM_SIZE).map(({ value }) => value);
+
+      // Randomly select a subset of ideal candidates to send metadata to
+      const candidateSubsetSize: number = Math.min(
+        Math.max(2, Math.ceil(idealCandidates.length * 0.7)),
+        idealCandidates.length
+      );
+      const selectedCandidates: Address[] = this.shuffleArray(idealCandidates).slice(0, candidateSubsetSize);
+
+      // Send a subset of metadata to each selected candidate
+      const metadataArray: Base64[] = Array.from(metadataSet.values());
+      const metadataSubsetSize: number = Math.min(
+        Math.max(1, Math.ceil(metadataArray.length * 0.8)),
+        metadataArray.length
+      );
+
+      for (const candidate of selectedCandidates) {
+        const metadataSubset: Base64[] = this.shuffleArray(metadataArray).slice(0, metadataSubsetSize);
+        const metadataRequest: SetMetadataRequest = {
+          hashKey: key,
+          metadata: metadataSubset,
+          type: SwarmTypes.SetMetadataRequest,
+        };
+
+        this.sendRequest(candidate, metadataRequest).catch((err: unknown) => {
+          this.logger.warn("auditMetadataCache", `Failed to send metadata to ${candidate}`, err);
+        });
+      }
     }
+  }
+
+  // Audit data fragments and ensure proper distribution
+  private async auditStorageCache(neighbors: Address[], addrHash: Uint8Array, maxDistance: number): Promise<void> {
+    const fragmentEntries: [Base64, DataFragment][] = Array.from(this.storageCache.entries());
+
+    if (fragmentEntries.length === 0) {
+      return;
+    }
+
+    // Group fragments by their ideal storage locations to optimize network requests
+    const fragmentsByCandidate = new Map<Address, Fragment[]>();
+
+    for (const [hashKey, dataFragment] of fragmentEntries) {
+      // Only consider fragments that are nearby
+      const distance: number = calculateDistance(addrHash, genericHash(hashKey));
+      if (maxDistance < distance) continue;
+
+      // Find ideal candidates for this fragment
+      const idealCandidates: Address[] = orderPeers(hashKey, neighbors, SwarmProto.SWARM_SIZE).map(
+        ({ value }) => value
+      );
+
+      // Ensure at least 3 nodes will have this fragment (minimum replication requirement)
+      const minReplicationCandidates: number = Math.min(3, idealCandidates.length);
+      const replicationCandidates: Address[] = idealCandidates.slice(0, minReplicationCandidates);
+
+      // Add some randomness by potentially including additional candidates
+      const extraCandidates: Address[] = idealCandidates.slice(minReplicationCandidates);
+      if (extraCandidates.length > 0 && Math.random() < 0.4) {
+        const randomExtra: Address = extraCandidates[Math.floor(Math.random() * extraCandidates.length)];
+        replicationCandidates.push(randomExtra);
+      }
+
+      // Group fragments by candidate to batch requests
+      for (const candidate of replicationCandidates) {
+        if (!fragmentsByCandidate.has(candidate)) {
+          fragmentsByCandidate.set(candidate, []);
+        }
+        fragmentsByCandidate.get(candidate)!.push(dataFragment.data);
+      }
+    }
+
+    // Send batched fragment requests to each candidate
+    for (const [candidate, fragments] of fragmentsByCandidate.entries()) {
+      // Send fragments in smaller batches to avoid overwhelming peers
+      const batchSize: number = Math.min(10, fragments.length);
+      for (let i = 0; i < fragments.length; i += batchSize) {
+        const fragmentBatch: Fragment[] = fragments.slice(i, i + batchSize);
+        const fragmentRequest: SetFragmentsRequest = {
+          fragments: fragmentBatch,
+          type: SwarmTypes.SetFragmentsRequest,
+        };
+
+        this.sendRequest(candidate, fragmentRequest).catch((err: unknown) => {
+          this.logger.warn("auditStorageCache", `Failed to send fragments to ${candidate}`, err);
+        });
+      }
+    }
+
+    this.logger.debug(
+      "auditStorageCache",
+      `Distributed ${fragmentEntries.length} fragments to ${fragmentsByCandidate.size} candidates`
+    );
   }
 
   public async start(): Promise<void> {
