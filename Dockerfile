@@ -15,8 +15,8 @@ RUN apk add --no-cache \
 # Copy package files first for better caching
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies (including dev dependencies for build)
+RUN npm ci
 
 # Copy TypeScript configuration
 COPY tsconfig.json ./
@@ -26,7 +26,10 @@ COPY src/ ./src/
 COPY env.d.ts ./
 
 # Build the application
-RUN npm run build
+RUN npx --package=typescript tsc
+
+# Remove dev dependencies to reduce image size
+RUN npm prune --production
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
@@ -47,5 +50,5 @@ EXPOSE 4001 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD node -e "console.log('Health check passed')" || exit 1
 
-# Start the application
-CMD ["npm", "start"]
+# Start the application directly with node (skip npm build since it's already built)
+CMD ["node", "--trace-warnings", "dist/index.js"]
