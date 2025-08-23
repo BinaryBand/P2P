@@ -3,15 +3,14 @@ import cors from "cors";
 import { PeerId } from "@libp2p/interface";
 import { peerIdFromString } from "@libp2p/peer-id";
 
-import { getNewClient, getPrivateKeyFromSeed, ClientNode } from "./tools/client.js";
 import { encodePeerId, isAddress } from "./tools/typing.js";
-import { sodium } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 
 interface RPCRequest {
   method: string;
   params: any;
   id?: string | number;
+  clientId?: string; // Optional client identifier
 }
 
 interface RPCResponse {
@@ -24,9 +23,23 @@ interface RPCResponse {
   id?: string | number;
 }
 
+// Interfaces for client-provided data in requests
+interface ValidateBootstrapParams {
+  peerId: string;
+  clientPeerId: string;
+}
+
+interface ValidateSendMessageParams {
+  recipient: string;
+  messages: string[];
+}
+
+interface ValidatePeerIdParams {
+  peerId: string;
+}
+
 export class P2PRPCServer {
   private app: express.Application;
-  private client: ClientNode | null = null;
   private server: any;
   private port: number;
 
@@ -54,8 +67,8 @@ export class P2PRPCServer {
       res.json({
         status: "ok",
         timestamp: new Date().toISOString(),
-        client_connected: !!this.client,
-        peer_id: this.client?.peerId?.toString() || null,
+        message: "P2P RPC Server is running",
+        version: "2.0.0-client-agnostic",
       });
     });
 
@@ -78,12 +91,11 @@ export class P2PRPCServer {
       }
     });
 
-    // RESTful endpoints for easier testing
-    this.app.post("/api/initialize", async (req: Request, res: Response) => {
+    // RESTful endpoints for validation and processing
+    this.app.post("/api/validate/bootstrap", async (req: Request, res: Response) => {
       try {
-        const { seedPassword } = req.body;
-        const result = await this.initializeClient(seedPassword);
-        res.json({ success: true, peerId: result });
+        const result = await this.validateBootstrap(req.body);
+        res.json({ success: true, validation: result });
       } catch (error) {
         res.status(400).json({
           success: false,
@@ -92,11 +104,10 @@ export class P2PRPCServer {
       }
     });
 
-    this.app.post("/api/bootstrap", async (req: Request, res: Response) => {
+    this.app.post("/api/validate/send", async (req: Request, res: Response) => {
       try {
-        const { peerId } = req.body;
-        await this.bootstrapToPeer(peerId);
-        res.json({ success: true, message: "Bootstrap completed" });
+        const result = await this.validateSendMessage(req.body);
+        res.json({ success: true, validation: result });
       } catch (error) {
         res.status(400).json({
           success: false,
@@ -105,10 +116,10 @@ export class P2PRPCServer {
       }
     });
 
-    this.app.get("/api/neighbors", async (_req: Request, res: Response) => {
+    this.app.post("/api/validate/peer", async (req: Request, res: Response) => {
       try {
-        const neighbors = await this.getNeighbors();
-        res.json({ success: true, neighbors });
+        const result = await this.validatePeerId(req.body);
+        res.json({ success: true, validation: result });
       } catch (error) {
         res.status(400).json({
           success: false,
@@ -117,11 +128,12 @@ export class P2PRPCServer {
       }
     });
 
-    this.app.post("/api/send", async (req: Request, res: Response) => {
+    // Process client data endpoints
+    this.app.post("/api/process/neighbors", async (req: Request, res: Response) => {
       try {
-        const { recipient, messages } = req.body;
-        await this.sendMessage(recipient, messages);
-        res.json({ success: true, message: "Messages sent successfully" });
+        const { neighbors } = req.body;
+        const result = await this.processNeighbors(neighbors);
+        res.json({ success: true, processed: result });
       } catch (error) {
         res.status(400).json({
           success: false,
@@ -130,26 +142,11 @@ export class P2PRPCServer {
       }
     });
 
-    this.app.get("/api/inbox/:peerId", async (req: Request, res: Response) => {
+    this.app.post("/api/process/inbox", async (req: Request, res: Response) => {
       try {
-        const peerId = req.params.peerId;
-        const messages = await this.getInbox(peerId);
-        res.json({ success: true, messages });
-      } catch (error) {
-        res.status(400).json({
-          success: false,
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
-      }
-    });
-
-    this.app.get("/api/inbox", async (_req: Request, res: Response) => {
-      try {
-        if (!this.client?.peerId) {
-          throw new Error("Client not initialized");
-        }
-        const messages = await this.getInbox();
-        res.json({ success: true, messages });
+        const { messages, peerId } = req.body;
+        const result = await this.processInbox(messages, peerId);
+        res.json({ success: true, processed: result });
       } catch (error) {
         res.status(400).json({
           success: false,
@@ -166,33 +163,31 @@ export class P2PRPCServer {
       let result: any;
 
       switch (method) {
-        case "initialize":
-          result = await this.initializeClient(params.seedPassword);
+        case "validateBootstrap":
+          result = await this.validateBootstrap(params);
           break;
 
-        case "bootstrap":
-          await this.bootstrapToPeer(params.peerId);
-          result = { success: true };
+        case "validateSendMessage":
+          result = await this.validateSendMessage(params);
           break;
 
-        case "getNeighbors":
-          result = await this.getNeighbors();
+        case "validatePeerId":
+          result = await this.validatePeerId(params);
           break;
 
-        case "sendMessage":
-          await this.sendMessage(params.recipient, params.messages);
-          result = { success: true };
+        case "processNeighbors":
+          result = await this.processNeighbors(params.neighbors);
           break;
 
-        case "getInbox":
-          result = await this.getInbox(params.peerId || this.client?.peerId?.toString());
+        case "processInbox":
+          result = await this.processInbox(params.messages, params.peerId);
           break;
 
-        case "getStatus":
+        case "getServerStatus":
           result = {
-            connected: !!this.client,
-            peerId: this.client?.peerId?.toString() || null,
+            status: "ok",
             timestamp: new Date().toISOString(),
+            version: "2.0.0-client-agnostic",
           };
           break;
 
@@ -213,102 +208,191 @@ export class P2PRPCServer {
     }
   }
 
-  private async initializeClient(seedPassword: string): Promise<string> {
-    if (this.client) {
-      await this.client.stop();
+  private async validateBootstrap(params: ValidateBootstrapParams): Promise<any> {
+    const { peerId, clientPeerId } = params;
+
+    if (!peerId || !clientPeerId) {
+      throw new Error("Both peerId and clientPeerId are required");
     }
 
-    await sodium.ready;
-    console.log("Initializing P2P client...");
+    // Validate peer ID formats
+    try {
+      const targetPeer = peerIdFromString(peerId);
+      const clientPeer = peerIdFromString(clientPeerId);
 
-    const privateKey = await getPrivateKeyFromSeed(seedPassword);
-    this.client = await getNewClient(["/ip4/0.0.0.0/udp/0/webrtc-direct", "/ip4/127.0.0.1/tcp/0/ws"], privateKey);
+      // Check if trying to bootstrap to self
+      if (targetPeer.equals(clientPeer)) {
+        throw new Error("Cannot bootstrap to self");
+      }
 
-    await this.client.start();
-    const peerId = this.client.peerId.toString();
-    console.log("Client initialized with ID:", peerId);
+      // Validate peer ID format
+      if (!isAddress(encodePeerId(targetPeer))) {
+        throw new Error("Invalid target peer ID format");
+      }
 
-    return peerId;
+      if (!isAddress(encodePeerId(clientPeer))) {
+        throw new Error("Invalid client peer ID format");
+      }
+
+      console.log(`Validated bootstrap request: ${clientPeerId} -> ${peerId}`);
+
+      return {
+        valid: true,
+        targetPeer: peerId,
+        clientPeer: clientPeerId,
+        message: "Bootstrap validation successful",
+      };
+    } catch (error) {
+      throw new Error(`Bootstrap validation failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
   }
 
-  private async bootstrapToPeer(peerIdString: string): Promise<void> {
-    if (!this.client) {
-      throw new Error("Client not initialized. Call initialize first.");
+  private async validateSendMessage(params: ValidateSendMessageParams): Promise<any> {
+    const { recipient, messages } = params;
+
+    if (!recipient) {
+      throw new Error("Recipient peer ID is required");
     }
 
-    const peerId: PeerId = peerIdFromString(peerIdString);
-    assert(!this.client.peerId.equals(peerId), "Cannot bootstrap to self");
-    assert(isAddress(encodePeerId(peerId)), "Invalid peer ID format");
-
-    console.log("Started bootstrapping with peer:", peerId.toString());
-
-    const abortController = new AbortController();
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      throw new Error("Messages array is required and must not be empty");
+    }
 
     try {
-      await this.client.peerRouting.findPeer(peerId, { signal: abortController.signal });
-      console.log("Found peer:", peerId.toString());
+      const recipientPeer = peerIdFromString(recipient);
 
-      await this.client.dial(peerId, { signal: abortController.signal });
-      console.log("Connected to peer:", peerId.toString());
-    } catch (err: unknown) {
-      console.warn("Error during bootstrapping:", err);
-      abortController.abort();
-      throw err;
+      if (!isAddress(encodePeerId(recipientPeer))) {
+        throw new Error("Invalid recipient peer ID format");
+      }
+
+      console.log(`Validated send message request to: ${recipient} (${messages.length} messages)`);
+
+      return {
+        valid: true,
+        recipient,
+        messageCount: messages.length,
+        messages: messages.map((msg, index) => ({ index, length: msg.length })),
+        message: "Send message validation successful",
+      };
+    } catch (error) {
+      throw new Error(`Send message validation failed: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   }
 
-  private async getNeighbors(): Promise<string[]> {
-    if (!this.client) {
-      throw new Error("Client not initialized. Call initialize first.");
+  private async validatePeerId(params: ValidatePeerIdParams): Promise<any> {
+    const { peerId } = params;
+
+    if (!peerId) {
+      throw new Error("Peer ID is required");
     }
 
-    const neighbors = this.client.services.proto.getNeighbors();
-    return neighbors;
+    try {
+      const peer = peerIdFromString(peerId);
+
+      if (!isAddress(encodePeerId(peer))) {
+        throw new Error("Invalid peer ID format");
+      }
+
+      console.log(`Validated peer ID: ${peerId}`);
+
+      return {
+        valid: true,
+        peerId,
+        encodedPeerId: encodePeerId(peer),
+        message: "Peer ID validation successful",
+      };
+    } catch (error) {
+      throw new Error(`Peer ID validation failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
   }
 
-  private async sendMessage(recipientString: string, messages: string[]): Promise<void> {
-    if (!this.client) {
-      throw new Error("Client not initialized. Call initialize first.");
+  private async processNeighbors(neighbors: string[]): Promise<any> {
+    if (!neighbors || !Array.isArray(neighbors)) {
+      throw new Error("Neighbors must be an array");
     }
 
-    assert(this.client.services.proto, "Message service not initialized");
+    const processed = neighbors.map((neighbor, index) => {
+      try {
+        const peer = peerIdFromString(neighbor);
+        return {
+          index,
+          peerId: neighbor,
+          valid: isAddress(encodePeerId(peer)),
+          encoded: encodePeerId(peer),
+        };
+      } catch (error) {
+        return {
+          index,
+          peerId: neighbor,
+          valid: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        };
+      }
+    });
 
-    const recipient: PeerId = peerIdFromString(recipientString);
-    assert(isAddress(encodePeerId(recipient)), "Invalid recipient address");
+    const validCount = processed.filter((p) => p.valid).length;
+    const invalidCount = processed.length - validCount;
 
-    console.log("Sending message to:", recipient.toString());
-    await this.client.services.proto.sendMessages(recipient, messages);
-    console.log("Message sent successfully!");
+    console.log(`Processed neighbors: ${validCount} valid, ${invalidCount} invalid`);
+
+    return {
+      total: processed.length,
+      valid: validCount,
+      invalid: invalidCount,
+      neighbors: processed,
+      message: "Neighbors processing completed",
+    };
   }
 
-  private async getInbox(peerIdString?: string): Promise<string[]> {
-    if (!this.client) {
-      throw new Error("Client not initialized. Call initialize first.");
+  private async processInbox(messages: string[], peerId?: string): Promise<any> {
+    if (!messages || !Array.isArray(messages)) {
+      throw new Error("Messages must be an array");
     }
 
-    const peerId = peerIdString ? peerIdFromString(peerIdString) : this.client.peerId;
-    const messages = await this.client.services.proto.getInbox(peerId);
-    return messages;
+    // Validate peer ID if provided
+    if (peerId) {
+      try {
+        const peer = peerIdFromString(peerId);
+        if (!isAddress(encodePeerId(peer))) {
+          throw new Error("Invalid peer ID format");
+        }
+      } catch (error) {
+        throw new Error(`Invalid peer ID: ${error instanceof Error ? error.message : "Unknown error"}`);
+      }
+    }
+
+    const processed = messages.map((message, index) => ({
+      index,
+      length: message.length,
+      preview: message.substring(0, 50) + (message.length > 50 ? "..." : ""),
+      timestamp: new Date().toISOString(),
+    }));
+
+    console.log(`Processed inbox: ${messages.length} messages${peerId ? ` for peer ${peerId}` : ""}`);
+
+    return {
+      messageCount: messages.length,
+      peerId: peerId || null,
+      messages: processed,
+      totalBytes: messages.reduce((sum, msg) => sum + msg.length, 0),
+      message: "Inbox processing completed",
+    };
   }
 
   public async start(): Promise<void> {
     return new Promise((resolve) => {
       this.server = this.app.listen(this.port, "0.0.0.0", () => {
-        console.log(`P2P RPC Server running on port ${this.port}`);
+        console.log(`P2P RPC Server (Client-Agnostic) running on port ${this.port}`);
         console.log(`Health check: http://localhost:${this.port}/health`);
         console.log(`RPC endpoint: http://localhost:${this.port}/rpc`);
-        console.log(`REST API: http://localhost:${this.port}/api/*`);
+        console.log(`Validation APIs: http://localhost:${this.port}/api/validate/*`);
+        console.log(`Processing APIs: http://localhost:${this.port}/api/process/*`);
         resolve();
       });
     });
   }
 
   public async stop(): Promise<void> {
-    if (this.client) {
-      await this.client.stop();
-      this.client = null;
-    }
-
     if (this.server) {
       return new Promise((resolve) => {
         this.server.close(() => {
