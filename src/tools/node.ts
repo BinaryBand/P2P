@@ -8,8 +8,9 @@ import { bootstrap } from "@libp2p/bootstrap";
 import { tcp } from "@libp2p/tcp";
 
 // Service imports
-import MessageProto, { MessageEvents } from "../protocols/message-proto.js";
+// import MessageProto, { MessageEvents } from "../protocols/message-proto.js";
 // import SwarmProto, { SwarmEvents } from "../protocols/swarm-proto.js";
+import HandshakeProto, { HandshakeEvents } from "../protocols/handshake-proto.js";
 import { identify } from "@libp2p/identify";
 import { kadDHT } from "@libp2p/kad-dht";
 import { ping } from "@libp2p/ping";
@@ -63,7 +64,7 @@ function getClientOptions(addresses: string[], privateKey?: PrivateKey) {
 
 export function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?: string): Promise<ClientNode> {
   const options = getClientOptions(addresses, privateKey);
-  return createLibp2p({ ...options, services: { ...options.services, proto: MessageProto.init(passphrase) } });
+  return createLibp2p({ ...options, services: { ...options.services, proto: HandshakeProto.init(passphrase) } });
 }
 
 export async function getPrivateKeyFromSeed(password: string): Promise<PrivateKey> {
@@ -73,5 +74,5 @@ export async function getPrivateKeyFromSeed(password: string): Promise<PrivateKe
 }
 
 export type ClientNode = import("@libp2p/interface").Libp2p<{
-  proto: MessageProto<MessageEvents>;
+  proto: HandshakeProto<HandshakeEvents>;
 }>;

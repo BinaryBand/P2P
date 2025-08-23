@@ -162,5 +162,5 @@ type MessageFragment = {
 /** LibP2P */
 
 type PeerId = import("@libp2p/interface").PeerId;
-type ClientNode = import("./src/tools/client").ClientNode;
+type ClientNode = import("./src/tools/node").ClientNode;
 type PrivateKey = import("@libp2p/interface").PrivateKey;

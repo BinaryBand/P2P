@@ -43,6 +43,10 @@ export default class HandshakeProto<T extends HandshakeEvents = HandshakeEvents>
     this.events = components.events;
   }
 
+  public static init(passphrase?: string): (params: Components) => HandshakeProto {
+    return (params: Components) => new HandshakeProto(params, passphrase);
+  }
+
   public getNeighbors(n: number = HandshakeProto.NEIGHBORHOOD_SIZE): Address[] {
     assert(n > 0, "Number of neighbors must be greater than zero");
     return this.peersCache
@@ -116,36 +120,6 @@ export default class HandshakeProto<T extends HandshakeEvents = HandshakeEvents>
    * @param n - The maximum number of nearest peers to return. Defaults to 3.
    * @returns A promise that resolves to an array of the nearest peer addresses.
    */
-  // protected async getNearestPeers(query: Base64, n: number, role: Role): Promise<Address[]> {
-  //   const hash: Base64 = hashFromData(query);
-  //   let peers: DistancePair<Address>[] = this.getNearestLocalPairs(hash, n);
-
-  //   let prevMinDistance: number = peers[0]?.distance ?? Infinity;
-  //   for (let depth: number = 0; depth < HandshakeProto.MAX_RECURSION_DEPTH; depth++) {
-  //     // Query the wide network for more peers
-  //     const wideNetPromises: Promise<Address[]>[] = peers
-  //       .map(({ value }: DistancePair<Address>) => this.getNearestRemotePeers(value, hash, n, role))
-  //       .map((prom: Promise<Address[]>) => this.getWithTimeout(prom, BaseProto.HEAVY_CALLBACK_TIMEOUT));
-
-  //     // Wait for all wide network queries to settle
-  //     const wideNetResults: PromiseSettledResult<Address[]>[] = await Promise.allSettled(wideNetPromises);
-  //     const validResults: Address[] = wideNetResults
-  //       .filter((res): res is PromiseFulfilledResult<Address[]> => res.status === "fulfilled")
-  //       .flatMap(({ value }: PromiseFulfilledResult<Address[]>) => value);
-
-  //     peers = orderPeers(hash, validResults, n);
-
-  //     const currMinDistance: number = peers[0]?.distance ?? prevMinDistance;
-  //     if (currMinDistance >= prevMinDistance || peers.length === 0) {
-  //       break;
-  //     }
-
-  //     prevMinDistance = currMinDistance;
-  //   }
-
-  //   return peers.map(({ value }) => value).slice(0, n);
-  // }
-
   protected async getNearestPeers(query: Base64, n: number, role: Role): Promise<Address[]> {
     const hashKey: Base64 = hashFromData(query);
 
