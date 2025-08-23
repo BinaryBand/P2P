@@ -8,6 +8,7 @@
   "main": "dist/index.js",
   "scripts": {
     "start": "npm run build && node --trace-warnings dist/index.js",
+    "start:bootstrap": "npm run build && node --trace-warnings dist/index.js --bootstrap",
     "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1",
     "typecheck": "tsc --noEmit"

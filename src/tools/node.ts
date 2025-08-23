@@ -21,8 +21,9 @@ import { keys } from "@libp2p/crypto";
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 
+import { encodePeerId, isAddress, toBuffer } from "./typing.js";
 import { genericHash } from "./cryptography.js";
-import { toBuffer } from "./typing.js";
+import { assert } from "./utils.js";
 
 const bootstrapNodes = [
   "/ip4/104.131.131.82/tcp/4001/ipfs/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
@@ -53,17 +54,48 @@ const stockOptions = {
   ],
 };
 
-function getClientOptions(addresses: string[], privateKey?: PrivateKey) {
+function getClientOptions(addresses: string[], privateKey?: PrivateKey, customBootstrapNodes?: string[]) {
+  const bootstrapList = customBootstrapNodes && customBootstrapNodes.length > 0 ? customBootstrapNodes : bootstrapNodes;
+
   return {
     ...stockOptions,
+    peerDiscovery: [
+      // mdns(),
+      bootstrap({ list: bootstrapList }),
+    ],
     addresses: { listen: [...addresses, "/p2p-circuit", "/webrtc"] },
     privateKey,
     services: { dht: kadDHT(), identify: identify(), ping: ping(), relay: circuitRelayServer() },
   };
 }
 
-export function getNewClient(addresses: string[], privateKey?: PrivateKey, passphrase?: string): Promise<ClientNode> {
-  const options = getClientOptions(addresses, privateKey);
+export async function bootstrapNode(gateway: GatewayNode, peerId: PeerId): Promise<void> {
+  assert(!gateway.peerId.equals(peerId), "Cannot bootstrap to self");
+  assert(isAddress(encodePeerId(peerId)), "Invalid peer ID format");
+
+  console.log("Started bootstrapping with peer:", peerId.toString());
+
+  const abortController: AbortController = new AbortController();
+
+  try {
+    await gateway.peerRouting.findPeer(peerId, { signal: abortController.signal });
+    console.log("Found peer:", peerId.toString());
+
+    await gateway.dial(peerId, { signal: abortController.signal });
+    console.log("Connected to peer:", peerId.toString());
+  } catch (err: unknown) {
+    console.warn("Error during bootstrapping:", err);
+    abortController.abort();
+  }
+}
+
+export function getNewGatewayNode(
+  addresses: string[],
+  privateKey?: PrivateKey,
+  passphrase?: string,
+  customBootstrapNodes?: string[]
+): Promise<GatewayNode> {
+  const options = getClientOptions(addresses, privateKey, customBootstrapNodes);
   return createLibp2p({ ...options, services: { ...options.services, proto: HandshakeProto.init(passphrase) } });
 }
 
@@ -73,6 +105,6 @@ export async function getPrivateKeyFromSeed(password: string): Promise<PrivateKe
   return keys.generateKeyPairFromSeed("Ed25519", seed);
 }
 
-export type ClientNode = import("@libp2p/interface").Libp2p<{
+export type GatewayNode = import("@libp2p/interface").Libp2p<{
   proto: HandshakeProto<HandshakeEvents>;
 }>;
