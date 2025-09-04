@@ -6,6 +6,21 @@ import HandshakeProto, { HandshakeEvents } from "./handshake-proto.js";
 import { setMetadataDb, getMetadataDb, setFragmentsDb, getDataFragmentsDb } from "../helpers/database.js";
 import { calculateDistance, orderPeers } from "../tools/routing.js";
 import { bytesToBase64, isFragment, Role } from "../tools/typing.js";
+import {
+  Address,
+  Base64,
+  Fragment,
+  Parcel,
+  ResData,
+  Acceptance,
+  DataFragment,
+  SetMetadataRequest,
+  GetMetadataRequest,
+  GetMetadataResponse,
+  SetFragmentsRequest,
+  GetFragmentsRequest,
+  GetFragmentsResponse,
+} from "../types/index.js";
 import { genericHash, hashFromData } from "../tools/cryptography.js";
 import { assert } from "../tools/utils.js";
 import BaseProto from "./base-proto.js";

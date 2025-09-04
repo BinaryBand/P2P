@@ -5,6 +5,7 @@ import inquirer from "inquirer";
 
 import { getNewClient, getPrivateKeyFromSeed } from "./tools/client.js";
 import { encodePeerId, isAddress } from "./tools/typing.js";
+import { Address, ClientNode } from "./types/index.js";
 import { sodium } from "./tools/cryptography.js";
 import { assert } from "./tools/utils.js";
 

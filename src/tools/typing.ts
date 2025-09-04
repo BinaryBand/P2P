@@ -5,23 +5,40 @@ import _ from "lodash";
 import { BaseTypes } from "../protocols/base-proto.js";
 import { HandshakeTypes } from "../protocols/handshake-proto.js";
 import { SwarmTypes } from "../protocols/swarm-proto.js";
+import {
+  Role,
+  Address,
+  Base64,
+  Fragment,
+  Formats,
+  Uuid,
+  MessageFragment,
+  Message,
+  Parcel,
+  Payload,
+  BatchItem,
+  ReqData,
+  Return,
+  ResData,
+  Acceptance,
+  Rejection,
+  InitiationRequest,
+  PingRequest,
+  GetNeighborsRequest,
+  SetMetadataRequest,
+  GetMetadataRequest,
+  SetFragmentsRequest,
+  GetFragmentsRequest,
+  InitiationResponse,
+  PingResponse,
+  GetNeighborsResponse,
+  GetMetadataResponse,
+  GetFragmentsResponse,
+} from "../types/index.js";
 // import { MessageTypes } from "../message-proto.js";
 
-export enum Role {
-  Phone = "phone",
-  Tower = "tower",
-  Gateway = "gateway",
-}
-
-export type Address = `${Formats.Base58},${string}`;
-export type Base64 = `${Formats.Base64},${string}`;
-export type Fragment = `${Formats.Utf8},${string}`;
-
-export enum Formats {
-  Base58 = "base58",
-  Base64 = "base64",
-  Utf8 = "utf8",
-}
+// Re-export types for backward compatibility
+export { Role, Address, Base64, Fragment, Formats };
 
 export const stringify = TextDecoder.prototype.decode.bind(new TextDecoder());
 export const toBuffer = TextEncoder.prototype.encode.bind(new TextEncoder());

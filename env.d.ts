@@ -1,166 +1,82 @@
-type Address = import("./src/tools/typing").Address;
-type Base64 = import("./src/tools/typing").Base64;
-type Fragment = import("./src/tools/typing").Fragment;
-type Encoded = Address | Base64 | Fragment;
+/**
+ * Global type declarations for TypeScript
+ * This file should only contain truly global types that need to be available everywhere
+ * without explicit imports. Most types have been moved to the src/types/ directory.
+ */
 
-type Uuid = `${string}-${string}-${string}-${string}-${string}`;
+// Re-export core types for global availability (if needed for backward compatibility)
+import type {
+  Address,
+  Base64,
+  Fragment,
+  Encoded,
+  Uuid,
+  Role,
+  PeerInfo,
+  DistancePair,
+  Return,
+  Callback,
+  ProtocolEvents,
+  AsyncIsh,
+  Parcel,
+  BatchItem,
+  Payload,
+  ReqData,
+  ResData,
+  Acceptance,
+  Rejection,
+  Message,
+  MessageFragment,
+  Metadata,
+  DataFragment,
+  PeerId,
+  PrivateKey,
+  ClientNode,
+} from "./src/types/index.js";
 
-interface Acceptance<T extends ResData> {
-  data: T;
-  success: true;
+// Make key types globally available
+declare global {
+  type Address = import("./src/types/index.js").Address;
+  type Base64 = import("./src/types/index.js").Base64;
+  type Fragment = import("./src/types/index.js").Fragment;
+  type Encoded = import("./src/types/index.js").Encoded;
+  type Uuid = import("./src/types/index.js").Uuid;
+  type Role = import("./src/types/index.js").Role;
+  type PeerInfo = import("./src/types/index.js").PeerInfo;
+  type DistancePair<T> = import("./src/types/index.js").DistancePair<T>;
+  type Return<T extends ResData = ResData> = import("./src/types/index.js").Return<T>;
+  type Callback<T extends ResData = ResData> = import("./src/types/index.js").Callback<T>;
+  type ProtocolEvents = import("./src/types/index.js").ProtocolEvents;
+  type AsyncIsh<T, U> = import("./src/types/index.js").AsyncIsh<T, U>;
+  type Parcel<T extends Payload> = import("./src/types/index.js").Parcel<T>;
+  type BatchItem<T extends Payload> = import("./src/types/index.js").BatchItem<T>;
+  type Payload = import("./src/types/index.js").Payload;
+  type ReqData = import("./src/types/index.js").ReqData;
+  type ResData = import("./src/types/index.js").ResData;
+  type Acceptance<T extends ResData> = import("./src/types/index.js").Acceptance<T>;
+  type Rejection = import("./src/types/index.js").Rejection;
+  type Message = import("./src/types/index.js").Message;
+  type MessageFragment = import("./src/types/index.js").MessageFragment;
+  type Metadata = import("./src/types/index.js").Metadata;
+  type DataFragment = import("./src/types/index.js").DataFragment;
+  type PeerId = import("./src/types/index.js").PeerId;
+  type PrivateKey = import("./src/types/index.js").PrivateKey;
+  type ClientNode = import("./src/types/index.js").ClientNode;
+
+  // Request types
+  type InitiationRequest = import("./src/types/index.js").InitiationRequest;
+  type PingRequest = import("./src/types/index.js").PingRequest;
+  type GetNeighborsRequest = import("./src/types/index.js").GetNeighborsRequest;
+  type SetMetadataRequest = import("./src/types/index.js").SetMetadataRequest;
+  type GetMetadataRequest = import("./src/types/index.js").GetMetadataRequest;
+  type SetFragmentsRequest = import("./src/types/index.js").SetFragmentsRequest;
+  type GetFragmentsRequest = import("./src/types/index.js").GetFragmentsRequest;
+
+  // Response types
+  type EmptyResponse = import("./src/types/index.js").EmptyResponse;
+  type InitiationResponse = import("./src/types/index.js").InitiationResponse;
+  type PingResponse = import("./src/types/index.js").PingResponse;
+  type GetNeighborsResponse = import("./src/types/index.js").GetNeighborsResponse;
+  type GetMetadataResponse = import("./src/types/index.js").GetMetadataResponse;
+  type GetFragmentsResponse = import("./src/types/index.js").GetFragmentsResponse;
 }
-
-interface Rejection {
-  message: string;
-  success: false;
-}
-
-type Return<T extends ResData = ResData> = Acceptance<T> | Rejection;
-type Callback<T extends ResData = ResData> = (res: Return<T>) => void;
-
-type ProtocolEvents = Record<string, CustomEvent<Parcel<ReqData>>>;
-
-type AsyncIsh<T, U> = (evt: T) => void | U | Promise<void | U>;
-
-/* Peer */
-
-type Role = import("./src/tools/typing").Role;
-
-interface PeerInfo {
-  peerId: import("@libp2p/interface").PeerId;
-  role: Role;
-  timestamp: number;
-}
-
-type DistancePair<T> = {
-  value: T;
-  distance: number;
-};
-
-/* Requests */
-
-interface InitiationRequest {
-  role: Role;
-  type: import("./src/protocols/handshake-proto").HandshakeTypes.InitiationRequest;
-}
-
-interface PingRequest {
-  type: import("./src/protocols/handshake-proto").HandshakeTypes.PingRequest;
-}
-
-interface GetNeighborsRequest {
-  n: number;
-  hash: Base64;
-  role: Role;
-  type: import("./src/protocols/handshake-proto").HandshakeTypes.GetNeighborsRequest;
-}
-
-interface SetMetadataRequest {
-  hashKey: Base64;
-  metadata: Base64[];
-  type: import("./src/protocols/swarm-proto").SwarmTypes.SetMetadataRequest;
-}
-
-interface GetMetadataRequest {
-  hashKey: Base64;
-  type: import("./src/protocols/swarm-proto").SwarmTypes.GetMetadataRequest;
-}
-
-interface SetFragmentsRequest {
-  fragments: Fragment[];
-  type: import("./src/protocols/swarm-proto").SwarmTypes.SetFragmentsRequest;
-}
-
-interface GetFragmentsRequest {
-  hashes: Base64[];
-  type: import("./src/protocols/swarm-proto").SwarmTypes.GetFragmentsRequest;
-}
-
-/* Responses */
-
-interface EmptyResponse {
-  type: import("./src/protocols/base-proto").BaseTypes.EmptyResponse;
-}
-
-interface InitiationResponse {
-  passphrase: string;
-  role: Role;
-  type: import("./src/protocols/handshake-proto").HandshakeTypes.InitiationResponse;
-}
-
-interface PingResponse {
-  type: import("./src/protocols/handshake-proto").HandshakeTypes.PingResponse;
-}
-
-interface GetNeighborsResponse {
-  peers: Address[];
-  type: import("./src/protocols/handshake-proto").HandshakeTypes.GetNeighborsResponse;
-}
-
-interface GetMetadataResponse {
-  metadata: Base64[];
-  type: import("./src/protocols/swarm-proto").SwarmTypes.GetMetadataResponse;
-}
-
-interface GetFragmentsResponse {
-  fragments: Fragment[];
-  type: import("./src/protocols/swarm-proto").SwarmTypes.GetFragmentsResponse;
-}
-
-type ReqData =
-  | InitiationRequest
-  | PingRequest
-  | GetNeighborsRequest
-  | SetMetadataRequest
-  | GetMetadataRequest
-  | SetFragmentsRequest
-  | GetFragmentsRequest;
-
-type ResData =
-  | EmptyResponse
-  | InitiationResponse
-  | PingResponse
-  | GetNeighborsResponse
-  | GetMetadataResponse
-  | GetFragmentsResponse;
-
-type Payload = ReqData | Return;
-
-type BatchItem<T extends Payload> = {
-  callbackId: Uuid;
-  payload: T;
-};
-
-interface Parcel<T extends Payload> {
-  batch: BatchItem<T>;
-  receiver: Address;
-  sender: Address;
-}
-
-/* Messages */
-
-interface Metadata {
-  id: number;
-  hashKey: Base64;
-  hash: Base64;
-  timestamp: number;
-}
-
-interface DataFragment {
-  hashKey: Base64;
-  data: Fragment;
-  timestamp: number;
-}
-
-type Message = string;
-
-type MessageFragment = {
-  id: Uuid;
-  content: Base64;
-};
-
-/** LibP2P */
-
-type PeerId = import("@libp2p/interface").PeerId;
-type ClientNode = import("./src/tools/client").ClientNode;
-type PrivateKey = import("@libp2p/interface").PrivateKey;

@@ -3,6 +3,21 @@ import { Components } from "libp2p/dist/src/components";
 import { LRUCache } from "lru-cache";
 
 import { bytesToBase64, decodeAddress, encodePeerId, Role } from "../tools/typing.js";
+import {
+  Address,
+  Base64,
+  DistancePair,
+  ProtocolEvents,
+  Parcel,
+  ResData,
+  Acceptance,
+  PingRequest,
+  PingResponse,
+  InitiationRequest,
+  InitiationResponse,
+  GetNeighborsRequest,
+  GetNeighborsResponse,
+} from "../types/index.js";
 import { genericHash, hashFromData } from "../tools/cryptography.js";
 import { orderPeers } from "../tools/routing.js";
 import { assert } from "../tools/utils.js";

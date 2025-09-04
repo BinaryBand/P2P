@@ -1,4 +1,5 @@
 import { base64ToBytes, isAddress, isBase64, isFragment } from "./typing.js";
+import { Address, Base64, Fragment, Encoded, DistancePair } from "../types/index.js";
 import { genericHash } from "./cryptography.js";
 import { assert } from "./utils.js";
 

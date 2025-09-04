@@ -7,6 +7,22 @@ import { LRUCache } from "lru-cache";
 import { pipe } from "it-pipe";
 
 import { isParcel, isReturn, isRequest, decodeAddress, encodePeerId, stringify, toBuffer } from "../tools/typing.js";
+import {
+  Address,
+  Role,
+  Uuid,
+  PeerInfo,
+  ProtocolEvents,
+  Payload,
+  Parcel,
+  ReqData,
+  ResData,
+  Acceptance,
+  Rejection,
+  Return,
+  Callback,
+  AsyncIsh,
+} from "../types/index.js";
 import DistanceCache from "../helpers/distance-cache.js";
 import { getLogger, Logger } from "../helpers/logger.js";
 import { assert } from "../tools/utils.js";

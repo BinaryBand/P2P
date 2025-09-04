@@ -1,4 +1,5 @@
 import { calculateDistance } from "../tools/routing.js";
+import { Encoded, DistancePair } from "../types/index.js";
 import { Heap } from "heap-js";
 
 export default class DistanceCache<T extends Encoded, U> {

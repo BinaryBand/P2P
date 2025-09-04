@@ -2,6 +2,7 @@ import { Components } from "libp2p/dist/src/components";
 import { PeerId } from "@libp2p/interface";
 
 import { decodeFragment, encodeFragment, encodePeerId, isMessage, isMessageFragment } from "../tools/typing.js";
+import { Address, Base64, Fragment, Uuid, Message, MessageFragment } from "../types/index.js";
 import { reconstructShamirSecret, shamirSecretSharing } from "../tools/cryptography.js";
 import SwarmProto, { SwarmEvents } from "./swarm-proto.js";
 import { assert } from "../tools/utils.js";
