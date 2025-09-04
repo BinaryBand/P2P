@@ -57,7 +57,7 @@ export default class SwarmProto<T extends SwarmEvents = SwarmEvents> extends Han
     super(components, passphrase, role);
   }
 
-  public static init<T extends SwarmEvents>(passphrase?: string): (params: Components) => SwarmProto<T> {
+  public static init(passphrase?: string): (params: Components) => SwarmProto {
     return (params: Components) => new SwarmProto(params, passphrase);
   }
 

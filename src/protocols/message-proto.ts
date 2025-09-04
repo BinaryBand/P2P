@@ -19,7 +19,7 @@ export default class MessageProto<T extends MessageEvents = MessageEvents> exten
     super(components, passphrase);
   }
 
-  public static init<T extends MessageEvents>(passphrase?: string): (params: Components) => MessageProto<T> {
+  public static init(passphrase?: string): (params: Components) => MessageProto {
     return (params: Components) => new MessageProto(params, passphrase);
   }
 
