@@ -292,8 +292,8 @@ export default class SwarmProto<T extends SwarmEvents = SwarmEvents> extends Han
   private async onGetMetadataRequest({
     detail,
   }: CustomEvent<Parcel<GetMetadataRequest>>): Promise<GetMetadataResponse> {
-    const addresses: Base64[] = (await this.getLocalMetadata(detail.batch.payload.hashKey)) ?? null;
-    return { metadata: [...(addresses || [])], type: SwarmTypes.GetMetadataResponse };
+    const metadata: Base64[] = await this.getLocalMetadata(detail.batch.payload.hashKey);
+    return { metadata, type: SwarmTypes.GetMetadataResponse };
   }
 
   private onSetFragmentsRequest({ detail }: CustomEvent<Parcel<SetFragmentsRequest>>): void {

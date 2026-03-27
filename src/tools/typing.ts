@@ -5,7 +5,6 @@ import _ from "lodash";
 import { BaseTypes } from "../protocols/base-proto.js";
 import { HandshakeTypes } from "../protocols/handshake-proto.js";
 import { SwarmTypes } from "../protocols/swarm-proto.js";
-// import { MessageTypes } from "../message-proto.js";
 
 export enum Role {
   Phone = "phone",
