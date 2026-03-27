@@ -4,12 +4,9 @@ import { circuitRelayServer, circuitRelayTransport } from "@libp2p/circuit-relay
 import { webRTC, webRTCDirect } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
 import { bootstrap } from "@libp2p/bootstrap";
-// import { mdns } from "@libp2p/mdns";
 import { tcp } from "@libp2p/tcp";
 
 // Service imports
-// import MessageProto, { MessageEvents } from "../protocols/message-proto.js";
-// import SwarmProto, { SwarmEvents } from "../protocols/swarm-proto.js";
 import HandshakeProto, { HandshakeEvents } from "../protocols/handshake-proto.js";
 import { identify } from "@libp2p/identify";
 import { kadDHT } from "@libp2p/kad-dht";

@@ -5,7 +5,7 @@ import inquirer from "inquirer";
 import { bootstrapClient, getClient } from "./client.js";
 import { sodium } from "./tools/cryptography.js";
 
-var client: ClientNode;
+let client: ClientNode;
 async function main(): Promise<void> {
   await sodium.ready;
   console.log("Starting application...");
@@ -34,8 +34,6 @@ async function main(): Promise<void> {
         choices: [
           { name: "Bootstrap to Peer ID", value: "bootstrap" },
           { name: "View Neighbors", value: "pool" },
-          // { name: "Send a message", value: "send" },
-          // { name: "View inbox", value: "inbox" },
           { name: "Exit", value: "exit" },
         ],
       });
@@ -54,17 +52,6 @@ async function main(): Promise<void> {
           const pool: Address[] = client.services.proto.getNeighbors();
           console.log("Connected peers:", pool);
           break;
-        // case "send":
-        //   const { recipient, message } = await inquirer.prompt([
-        //     { type: "input", name: "recipient", message: "Enter recipient peer ID:" },
-        //     { type: "input", name: "message", message: "Enter your message:" },
-        //   ]);
-        //   await sendMessage(client, recipient, [message]);
-        //   break;
-        // case "inbox":
-        //   const inbox: string[] = await client.services.proto.getInbox(client.peerId);
-        //   console.log("Inbox messages:", inbox);
-        //   break;
         case "exit":
           running = false;
           console.log("Exiting...");
@@ -86,5 +73,5 @@ main()
   .finally(async () => {
     await client?.stop();
     console.log("Cleanup complete.");
-    process.exit(1);
+    process.exit(0);
   });

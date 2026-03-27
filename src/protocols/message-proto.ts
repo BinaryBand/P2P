@@ -71,12 +71,4 @@ export default class MessageProto<T extends MessageEvents = MessageEvents> exten
 
     return reconstructedMessages.filter(isMessage);
   }
-
-  public async start(): Promise<void> {
-    await super.start();
-  }
-
-  public async stop(): Promise<void> {
-    await super.stop();
-  }
 }

@@ -113,7 +113,7 @@ export default class HandshakeProto<T extends HandshakeEvents = HandshakeEvents>
    * Finds and returns the addresses of the nearest peers to a given query.
    *
    * This method first retrieves the nearest local peers, then iteratively queries those peers
-   * for their nearest peers, up to a maximum recursion depth defined by `SwarmProto.MAX_RECURSION_DEPTH`.
+   * for their nearest peers, up to a maximum recursion depth defined by `HandshakeProto.MAX_RECURSION_DEPTH`.
    * The process stops early if no closer peers are found in an iteration.
    *
    * @param query - The identifier or key to search nearest peers for.

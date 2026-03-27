@@ -67,19 +67,19 @@ export function calculateDistance(a: unknown, b: unknown): number {
  */
 export function orderPeers(query: Base64, candidates: Address[], n: number): DistancePair<Address>[] {
   const key: Uint8Array = genericHash(query);
-  const minHeap = new Heap<DistancePair<Address>>((a, b) => a.distance - b.distance);
+  const maxHeap = new Heap<DistancePair<Address>>((a, b) => b.distance - a.distance);
 
   for (const address of candidates) {
     const peerCode: Uint8Array = genericHash(address);
     const distance: number = calculateDistance(key, peerCode);
 
-    if (minHeap.size() < n || distance < (minHeap.peek()?.distance ?? Infinity)) {
-      minHeap.push({ value: address, distance });
-      if (minHeap.size() > n) {
-        minHeap.pop();
+    if (maxHeap.size() < n || distance < (maxHeap.peek()?.distance ?? Infinity)) {
+      maxHeap.push({ value: address, distance });
+      if (maxHeap.size() > n) {
+        maxHeap.pop();
       }
     }
   }
 
-  return minHeap.toArray();
+  return maxHeap.toArray().sort((a, b) => a.distance - b.distance);
 }
