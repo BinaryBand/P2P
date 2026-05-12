@@ -155,6 +155,7 @@ The application stores data in the `storage/` directory:
 ```
 src/
 ├── index.ts              # Main application entry point
+├── client.ts             # P2P client setup
 ├── helpers/              # Utility functions
 │   ├── database.ts       # Database operations
 │   ├── distance-cache.ts # Caching utilities
@@ -165,8 +166,8 @@ src/
 │   ├── message-proto.ts  # Message protocol
 │   └── swarm-proto.ts    # Swarm protocol
 └── tools/                # Core utilities
-    ├── client.ts         # P2P client setup
     ├── cryptography.ts   # Cryptographic functions
+    ├── node.ts           # libp2p node factory
     ├── routing.ts        # Message routing
     ├── typing.ts         # Type definitions
     └── utils.ts          # General utilities
